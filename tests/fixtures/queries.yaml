@@ -1,0 +1,9 @@
+queries:
+  - id: refund_window
+    query: "refund after 90 days"
+    expect_docs:
+      - "refund.md"
+  - id: shipping_options
+    query: "express shipping times"
+    expect_docs:
+      - "shipping.md"
