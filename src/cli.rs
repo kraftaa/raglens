@@ -63,18 +63,21 @@ pub enum Commands {
         json: bool,
     },
     /// Explain why top docs ranked for a query
+    #[command(name = "explain")]
     Explain {
         path: PathBuf,
         #[arg(long)]
         query: String,
     },
     /// Compare near-match docs/chunks for a query
-    Compare {
+    #[command(name = "compare-query", alias = "compare")]
+    CompareQuery {
         path: PathBuf,
         #[arg(long)]
         query: String,
     },
     /// Compare two simulation JSON reports (before/after)
+    #[command(name = "compare-runs", alias = "compare-sim")]
     CompareRuns {
         /// Baseline simulation JSON
         baseline: PathBuf,

@@ -1,6 +1,9 @@
 # rag-audit
 
-A CLI to diagnose **retrieval** problems in RAG systems. It analyzes your corpus before you build a full pipeline, answering:
+“A CLI to debug retrieval behavior in RAG systems.”
+Scope: retrieval diagnostics only (no answer grading, hallucination detection, prompt eval, or framework integrations).
+
+It analyzes your corpus before you build a full pipeline, answering:
 
 - Are my chunks too large or too small?
 - Do some documents dominate retrieval?
@@ -62,15 +65,14 @@ cargo build --release
 - `explain <docs> --query "..." [--json-out file]`: EXPLAIN-style breakdown of why top docs ranked.
 - `coverage <docs> [--queries queries.txt] [--json-out file]`: with queries → Good/Weak/None coverage; without queries → topic imbalance.
 
-Add `--artifacts-dir artifacts/` to save standard JSON files per command (e.g., `artifacts/readiness.json`, `simulation.json`, `chunks.json`, `explain.json`).
+Add `--artifacts-dir artifacts/` to save standard JSON files per command (e.g., `artifacts/readiness.json`, `simulation.json`, `chunks.json`, `explain.json`, `compare_runs.json`).
 
 ## How it works (deterministic pipeline)
-1) Load docs (`.md`, `.txt`, `.json`) and optional frontmatter metadata.  
-2) Normalize and chunk with fixed rules (default: size 400, overlap 50; demo config uses 200/30). Sequential, so runs are repeatable.  
-3) Embed chunks: default deterministic “Null” bag-of-words embedder (offline). Optional OpenAI embeddings with retry/backoff/timeout and on-disk cache keyed by text+model.  
-4) Retrieve: embed queries, cosine similarity, top-k (default 5), deterministic ordering.  
-5) Diagnose: chunk stats (avg/min/max/p50/p95, large/small, duplicates), dominance (top1/top3 freq), coverage (low/no-match vs thresholds), EXPLAIN per query (semantic, keyword overlap, length penalty placeholder, tokens).  
-6) Report: human output + JSON artifacts (`--json-out` or `--artifacts-dir`) for CI/diffs.
+1) Load & chunk docs  
+2) Generate embeddings (default offline deterministic; optional OpenAI)  
+3) Retrieve with cosine top-k  
+4) Analyze chunk stats & retrieval behavior (dominance, low/no-match, EXPLAIN)  
+5) Output human report + JSON artifacts (`--json-out` or `--artifacts-dir`)
 
 ## Inputs
 Documents (v1): `.md`, `.txt`, `.json`. (PDF optional later.)
@@ -83,6 +85,12 @@ Queries:
 - Chunk size 400 tokens, overlap 50.
 - Retrieval: cosine, top_k=5.
 - Embedding: single configured backend (Null bag-of-words by default; OpenAI available via config/env). Sequential processing for repeatability.
+
+## When this is useful
+- Debugging unexpected retrieval results
+- Validating chunking strategy
+- Detecting dominant documents
+- Testing query coverage of a knowledge base
 
 ## JSON artifacts (per command)
 `--json-out file` writes that command’s report; `--artifacts-dir dir` writes standard filenames:

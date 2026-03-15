@@ -49,7 +49,7 @@ fn main() -> Result<()> {
         Commands::Explain { path, query } => {
             run_explain(path, &config, artifacts, json_out, query)?
         }
-        Commands::Compare { path, query } => {
+        Commands::CompareQuery { path, query } => {
             run_compare(path, &config, artifacts, json_out, query)?
         }
         Commands::CompareRuns {
