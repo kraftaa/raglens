@@ -20,12 +20,20 @@ docs/
   refund_old.md
   faq.md
   shipping.md
+  returns.md
+  billing.md
+  support.md
+  pricing.md
 ```
 Example queries (`queries.txt`, one per line):
 ```
 refund after 90 days
 late shipment refund
 how long does shipping take
+return damaged item
+billing dispute window
+lost package claim
+express shipping speed
 ```
 Run:
 ```bash
@@ -73,6 +81,23 @@ Add `--artifacts-dir artifacts/` to save standard JSON files per command (e.g., 
 3) Retrieve with cosine top-k  
 4) Analyze chunk stats & retrieval behavior (dominance, low/no-match, EXPLAIN)  
 5) Output human report + JSON artifacts (`--json-out` or `--artifacts-dir`)
+
+### Sample output (readiness on the demo)
+```
+RAG Retrieval Readiness Report
+==============================
+
+Documents: 7
+Chunks: 7
+
+Chunk config: size 200 overlap 30
+Chunk size avg 88.4 | min 52 | max 132 | p50 90 | p95 132
+- LOW: 0 chunks below min_tokens 40
+- LOW: duplicate chunks detected: 1
+- HIGH: faq.md retrieved in 57% (dominant)
+- HIGH: refund_old.md retrieved in 43%
+- Coverage: weak matches 2, no matches 1
+```
 
 ## Inputs
 Documents (v1): `.md`, `.txt`, `.json`. (PDF optional later.)
