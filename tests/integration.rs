@@ -43,5 +43,8 @@ fn simulate_honors_expectations() {
     let findings = v["findings"].as_array().cloned().unwrap_or_default();
     // No expectation misses
     let has_fail = findings.iter().any(|f| f["severity"] == "Fail");
-    assert!(!has_fail, "expected no expectation failures, got {findings:?}");
+    assert!(
+        !has_fail,
+        "expected no expectation failures, got {findings:?}"
+    );
 }

@@ -1,0 +1,17 @@
+# Example configuration for rag-audit
+chunk_size = 400
+chunk_overlap = 40
+max_tokens = 1200
+min_tokens = 60
+top_k = 5
+dominant_threshold = 0.2
+required_metadata = ["product", "region", "version"]
+
+# Embeddings
+provider = "null" # or "openai"
+model = "text-embedding-3-small"
+base_url = "https://api.openai.com/v1"
+cache_dir = ".rag-audit-cache"
+
+# CLI overrides (take precedence over this file):
+# rag-audit --embedder openai --cache-dir /tmp/rag-cache ...

@@ -1,15 +1,13 @@
 use crate::config::Config;
-use crate::embeddings::{embed_corpus, Embedder};
-use crate::model::{
-    ChunkEmbedding, Corpus, RankedChunk, RetrievalExplanation, RetrievalResult,
-};
+use crate::embeddings::{hash_text_key, Embedder, EmbeddingCache};
+use crate::model::{ChunkEmbedding, Corpus, RankedChunk, RetrievalExplanation, RetrievalResult};
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ExplainedChunk {
     pub rank: usize,
     pub chunk_id: String,
@@ -18,12 +16,12 @@ pub struct ExplainedChunk {
     pub explanation: RetrievalExplanation,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ExplanationReport {
     pub ranked: Vec<ExplainedChunk>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct CompareReport {
     pub ranked: Vec<ExplainedChunk>,
 }
@@ -53,7 +51,7 @@ pub fn simulate_retrieval(
     queries_file: Option<&Path>,
     config: &Config,
 ) -> Result<SimulationOutput> {
-    let corpus_embeddings = embed_corpus(corpus, embedder)?;
+    let corpus_embeddings = embed_with_cache(corpus, embedder, config)?;
     let chunk_lookup: HashMap<_, _> = corpus
         .chunks
         .iter()
@@ -88,7 +86,7 @@ pub fn explain_query(
     query: &str,
     config: &Config,
 ) -> Result<ExplanationReport> {
-    let corpus_embeddings = embed_corpus(corpus, embedder)?;
+    let corpus_embeddings = embed_with_cache(corpus, embedder, config)?;
     let chunk_lookup: HashMap<_, _> = corpus
         .chunks
         .iter()
@@ -123,20 +121,30 @@ pub fn compare_query(
 ) -> Result<CompareReport> {
     let report = explain_query(corpus, embedder, query, config)?;
     // limit to top 5 for comparison output
-    let ranked = report
-        .ranked
-        .into_iter()
-        .take(5)
-        .collect();
+    let ranked = report.ranked.into_iter().take(5).collect();
     Ok(CompareReport { ranked })
 }
 
 fn load_queries(path: &Path) -> Result<Vec<QuerySpec>> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("reading queries file {}", path.display()))?;
-    let qf: QueriesFile =
-        serde_yaml::from_str(&content).context("parsing queries YAML")?;
-    Ok(qf.queries)
+    if let Ok(qf) = serde_yaml::from_str::<QueriesFile>(&content) {
+        return Ok(qf.queries);
+    }
+    // fallback: plain text, one query per non-empty line
+    let mut out = Vec::new();
+    for (i, line) in content.lines().enumerate() {
+        let q = line.trim();
+        if q.is_empty() {
+            continue;
+        }
+        out.push(QuerySpec {
+            id: format!("q{}", i + 1),
+            query: q.to_string(),
+            expect_docs: Vec::new(),
+        });
+    }
+    Ok(out)
 }
 
 fn synthesize_queries(corpus: &Corpus) -> Vec<QuerySpec> {
@@ -147,10 +155,7 @@ fn synthesize_queries(corpus: &Corpus) -> Vec<QuerySpec> {
         .enumerate()
         .map(|(i, doc)| QuerySpec {
             id: format!("auto_{}", i),
-            query: doc
-                .title
-                .clone()
-                .unwrap_or_else(|| doc.id.clone()),
+            query: doc.title.clone().unwrap_or_else(|| doc.id.clone()),
             expect_docs: vec![doc.id.clone()],
         })
         .collect()
@@ -198,7 +203,11 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     dot / (na.sqrt() * nb.sqrt())
 }
 
-fn build_explanation(query: &str, chunk: &crate::model::Chunk, similarity: f32) -> RetrievalExplanation {
+fn build_explanation(
+    query: &str,
+    chunk: &crate::model::Chunk,
+    similarity: f32,
+) -> RetrievalExplanation {
     let query_lower = query.to_lowercase();
     let query_tokens: Vec<&str> = query_lower.split_whitespace().collect();
     let chunk_lower = chunk.text.to_lowercase();
@@ -207,11 +216,64 @@ fn build_explanation(query: &str, chunk: &crate::model::Chunk, similarity: f32) 
         .filter(|t| chunk_lower.contains(&t[..]))
         .count();
     let phrase_match = chunk_lower.contains(&query_lower);
+    let keyword_overlap_norm = keyword_overlap as f32 / (query_tokens.len().max(1) as f32);
+    let length_penalty = if chunk.token_count > 800 {
+        ((chunk.token_count as f32 - 800.0) / 800.0).min(0.3)
+    } else {
+        0.0
+    };
+    let metadata_boost = 0.0; // placeholder for filter-aware scoring
+    let total_score = similarity + metadata_boost - length_penalty;
     RetrievalExplanation {
         chunk_id: chunk.chunk_id.clone(),
         similarity,
         keyword_overlap,
+        keyword_overlap_norm,
         phrase_match,
         token_count: chunk.token_count,
+        metadata_boost,
+        length_penalty,
+        total_score,
     }
+}
+
+fn embed_with_cache(
+    corpus: &Corpus,
+    embedder: &dyn Embedder,
+    config: &Config,
+) -> Result<Vec<ChunkEmbedding>> {
+    let mut cache = EmbeddingCache::load(config.cache_dir.join("embeddings.json"))?;
+    let model_tag = match &config.embedder {
+        crate::config::EmbedderConfig::Null => "null",
+        crate::config::EmbedderConfig::OpenAI { model, .. } => model.as_str(),
+    };
+
+    let mut vectors = Vec::with_capacity(corpus.chunks.len());
+    let mut to_embed = Vec::new();
+    for chunk in &corpus.chunks {
+        let key = hash_text_key(&chunk.text, embedder.dim(), model_tag);
+        if let Some(vec) = cache.get(&key) {
+            vectors.push(ChunkEmbedding {
+                chunk_id: chunk.chunk_id.clone(),
+                vector: vec.clone(),
+            });
+        } else {
+            to_embed.push((key, chunk));
+        }
+    }
+
+    if !to_embed.is_empty() {
+        let texts: Vec<String> = to_embed.iter().map(|(_, c)| c.text.clone()).collect();
+        let embedded = embedder.embed_batch(&texts)?;
+        for ((key, chunk), vector) in to_embed.into_iter().zip(embedded.into_iter()) {
+            cache.insert(key, vector.clone());
+            vectors.push(ChunkEmbedding {
+                chunk_id: chunk.chunk_id.clone(),
+                vector,
+            });
+        }
+        cache.persist().ok();
+    }
+
+    Ok(vectors)
 }

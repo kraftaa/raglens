@@ -47,13 +47,55 @@ pub struct RetrievalResult {
     pub ranked: Vec<RankedChunk>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct CoverageSummary {
+    pub queries: usize,
+    pub good: usize,
+    pub weak: usize,
+    pub none: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct ChunkStats {
+    pub documents: usize,
+    pub chunks: usize,
+    pub avg_tokens: f32,
+    pub min_tokens: usize,
+    pub max_tokens: usize,
+    pub p50_tokens: usize,
+    pub p95_tokens: usize,
+    pub large_chunks: usize,
+    pub small_chunks: usize,
+    pub duplicate_chunks: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct SimSummary {
+    pub queries: usize,
+    pub avg_top1_similarity: f32,
+    pub low_similarity_queries: usize,
+    pub no_match_queries: usize,
+    pub top1_freq: Vec<DocFreq>,
+    pub top3_freq: Vec<DocFreq>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DocFreq {
+    pub doc_id: String,
+    pub count: usize,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RetrievalExplanation {
     pub chunk_id: String,
     pub similarity: f32,
     pub keyword_overlap: usize,
+    pub keyword_overlap_norm: f32,
     pub phrase_match: bool,
     pub token_count: usize,
+    pub metadata_boost: f32,
+    pub length_penalty: f32,
+    pub total_score: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

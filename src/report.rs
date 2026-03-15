@@ -1,16 +1,36 @@
-use crate::model::{Corpus, Finding, RetrievalResult};
-use crate::retrieval::{CompareReport, ExplanationReport};
+use crate::config::Config;
+use crate::model::{ChunkStats, Corpus, CoverageSummary, Finding, RetrievalResult};
+use crate::retrieval::{CompareReport, ExplanationReport, QuerySpec};
 use anyhow::Result;
 use serde::Serialize;
+use std::fs;
+use std::path::PathBuf;
 
-pub fn print_readiness(corpus: &Corpus, findings: &[Finding], json: bool) -> Result<()> {
+pub fn print_readiness(
+    corpus: &Corpus,
+    findings: &[Finding],
+    stats: &ChunkStats,
+    sim_summary: Option<&crate::model::SimSummary>,
+    coverage: Option<&CoverageSummary>,
+    config: &crate::config::Config,
+    artifacts: Option<&PathBuf>,
+    json_out: Option<&PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let payload = JsonReport {
+        documents: corpus.documents.len(),
+        chunks: corpus.chunks.len(),
+        passes: None,
+        fails: None,
+        findings,
+        retrievals: &[],
+        expectations: None,
+        coverage,
+        chunk_stats: Some(stats.clone()),
+        sim_summary: sim_summary.cloned(),
+    };
+    write_artifact(artifacts, json_out, "readiness.json", &payload)?;
     if json {
-        let payload = JsonReport {
-            documents: corpus.documents.len(),
-            chunks: corpus.chunks.len(),
-            findings,
-            retrievals: &[],
-        };
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
@@ -21,6 +41,14 @@ pub fn print_readiness(corpus: &Corpus, findings: &[Finding], json: bool) -> Res
     println!("Documents: {}", corpus.documents.len());
     println!("Chunks: {}", corpus.chunks.len());
     println!();
+    println!(
+        "Chunk config: size {} overlap {}",
+        config.chunk_size, config.chunk_overlap
+    );
+    println!(
+        "Chunk size avg {:.1} | min {} | max {} | p50 {} | p95 {}",
+        stats.avg_tokens, stats.min_tokens, stats.max_tokens, stats.p50_tokens, stats.p95_tokens
+    );
     print_findings(findings);
     Ok(())
 }
@@ -28,16 +56,33 @@ pub fn print_readiness(corpus: &Corpus, findings: &[Finding], json: bool) -> Res
 pub fn print_simulation(
     corpus: &Corpus,
     retrievals: &[RetrievalResult],
+    queries: &[QuerySpec],
+    config: &Config,
     findings: &[Finding],
+    artifacts: Option<&PathBuf>,
+    json_out: Option<&PathBuf>,
     json: bool,
 ) -> Result<()> {
-    if json {
-        let payload = JsonReport {
-            documents: corpus.documents.len(),
-            chunks: corpus.chunks.len(),
-            findings,
+    let (pass, fail) = expectation_counts(retrievals, queries, config.top_k);
+
+    let payload = JsonReport {
+        documents: corpus.documents.len(),
+        chunks: corpus.chunks.len(),
+        passes: Some(pass),
+        fails: Some(fail),
+        findings,
+        retrievals,
+        expectations: Some(expectation_outcomes(retrievals, queries, config.top_k)),
+        coverage: None,
+        chunk_stats: None,
+        sim_summary: Some(crate::diagnostics::simulate_summary(
             retrievals,
-        };
+            config.low_sim_threshold,
+            config.no_match_threshold,
+        )),
+    };
+    write_artifact(artifacts, json_out, "simulation.json", &payload)?;
+    if json {
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
@@ -48,50 +93,123 @@ pub fn print_simulation(
     println!("Queries: {}", retrievals.len());
     println!("Documents: {}", corpus.documents.len());
     println!("Chunks: {}", corpus.chunks.len());
+    println!("PASS: {pass}  FAIL: {fail}");
     println!();
+    if !queries.is_empty() {
+        println!("Expectations (top-3 preview):");
+        println!(
+            "{:<12} {:<6} {:<10} {:<20} {}",
+            "query", "stat", "best_rank", "expected", "top3"
+        );
+        for outcome in expectation_outcomes(retrievals, queries, config.top_k) {
+            println!(
+                "{:<12} {:<6} {:<10?} {:<20?} {:?}",
+                outcome.query_id,
+                outcome.status,
+                outcome.best_rank,
+                outcome.expected,
+                outcome.top_docs
+            );
+        }
+        println!();
+    }
     print_findings(findings);
     Ok(())
 }
 
-pub fn print_chunks(corpus: &Corpus, findings: &[Finding], json: bool) -> Result<()> {
+pub fn print_chunks(
+    corpus: &Corpus,
+    findings: &[Finding],
+    stats: &ChunkStats,
+    artifacts: Option<&PathBuf>,
+    json_out: Option<&PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let payload = JsonReport {
+        documents: corpus.documents.len(),
+        chunks: corpus.chunks.len(),
+        passes: None,
+        fails: None,
+        findings,
+        retrievals: &[],
+        expectations: None,
+        coverage: None,
+        chunk_stats: Some(stats.clone()),
+        sim_summary: None,
+    };
+    write_artifact(artifacts, json_out, "chunks.json", &payload)?;
     if json {
-        let payload = JsonReport {
-            documents: corpus.documents.len(),
-            chunks: corpus.chunks.len(),
-            findings,
-            retrievals: &[],
-        };
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
     println!("Chunk Diagnostics");
     println!("=================");
     println!();
+    let total = corpus.chunks.len() as f32;
+    let avg_tokens = stats.avg_tokens;
+    let large = stats.large_chunks;
+    let small = stats.small_chunks;
     println!("Chunks: {}", corpus.chunks.len());
+    println!("Avg tokens: {:.1}", avg_tokens);
+    println!(
+        "Large (>800): {} ({:.0}%) | Small (<100): {} ({:.0}%)",
+        large,
+        (large as f32 / total.max(1.0)) * 100.0,
+        small,
+        (small as f32 / total.max(1.0)) * 100.0
+    );
     println!();
     print_findings(findings);
     Ok(())
 }
 
-pub fn print_coverage(corpus: &Corpus, findings: &[Finding], json: bool) -> Result<()> {
+pub fn print_coverage(
+    corpus: &Corpus,
+    findings: &[Finding],
+    coverage: Option<&CoverageSummary>,
+    artifacts: Option<&PathBuf>,
+    json_out: Option<&PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let payload = JsonReport {
+        documents: corpus.documents.len(),
+        chunks: corpus.chunks.len(),
+        passes: coverage.map(|c| c.good),
+        fails: coverage.map(|c| c.weak + c.none),
+        findings,
+        retrievals: &[],
+        expectations: None,
+        coverage,
+        chunk_stats: None,
+        sim_summary: None,
+    };
+    write_artifact(artifacts, json_out, "coverage.json", &payload)?;
     if json {
-        let payload = JsonReport {
-            documents: corpus.documents.len(),
-            chunks: corpus.chunks.len(),
-            findings,
-            retrievals: &[],
-        };
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
-    println!("Topic Coverage");
-    println!("==============");
-    println!();
+    if let Some(cov) = coverage {
+        println!("Retrieval Coverage");
+        println!("==================");
+        println!();
+        println!("Queries: {}", cov.queries);
+        println!("Good: {}  Weak: {}  None: {}", cov.good, cov.weak, cov.none);
+    } else {
+        println!("Topic Coverage");
+        println!("==============");
+        println!();
+    }
     print_findings(findings);
     Ok(())
 }
 
-pub fn print_explanation(query: &str, report: &ExplanationReport) -> Result<()> {
+pub fn print_explanation(
+    query: &str,
+    report: &ExplanationReport,
+    artifacts: Option<&PathBuf>,
+    json_out: Option<&PathBuf>,
+) -> Result<()> {
+    write_artifact(artifacts, json_out, "explain.json", report)?;
     println!("Retrieval Explanation");
     println!("=====================");
     println!();
@@ -99,18 +217,32 @@ pub fn print_explanation(query: &str, report: &ExplanationReport) -> Result<()> 
     println!();
     for item in &report.ranked {
         println!("{} {} (doc: {})", item.rank, item.chunk_id, item.doc_id);
-        println!("  similarity: {:.3}", item.score);
+        println!("  score: {:.3}", item.explanation.total_score);
+        println!("  components:");
+        println!("    semantic: {:.3}", item.explanation.similarity);
         println!(
-            "  keyword overlap: {} | phrase match: {} | tokens: {}",
-            item.explanation.keyword_overlap,
-            item.explanation.phrase_match,
-            item.explanation.token_count
+            "    keyword overlap: {} ({:.2})",
+            item.explanation.keyword_overlap, item.explanation.keyword_overlap_norm
+        );
+        println!(
+            "    metadata boost: {:.3} | length penalty: {:.3}",
+            item.explanation.metadata_boost, item.explanation.length_penalty
+        );
+        println!(
+            "    phrase match: {} | tokens: {}",
+            item.explanation.phrase_match, item.explanation.token_count
         );
     }
     Ok(())
 }
 
-pub fn print_comparison(query: &str, report: &CompareReport) -> Result<()> {
+pub fn print_comparison(
+    query: &str,
+    report: &CompareReport,
+    artifacts: Option<&PathBuf>,
+    json_out: Option<&PathBuf>,
+) -> Result<()> {
+    write_artifact(artifacts, json_out, "compare.json", report)?;
     println!("Retrieval Compare");
     println!("=================");
     println!();
@@ -147,9 +279,21 @@ fn print_findings(findings: &[Finding]) {
 struct JsonReport<'a> {
     documents: usize,
     chunks: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    passes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fails: Option<usize>,
     findings: &'a [Finding],
     #[serde(skip_serializing_if = "slice_is_empty")]
     retrievals: &'a [RetrievalResult],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expectations: Option<Vec<ExpectationOutcome>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coverage: Option<&'a CoverageSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chunk_stats: Option<ChunkStats>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sim_summary: Option<crate::model::SimSummary>,
 }
 
 fn slice_is_empty<T>(slice: &[T]) -> bool {
@@ -164,4 +308,161 @@ fn severity_label(sev: &crate::model::Severity) -> &'static str {
         crate::model::Severity::Info => "INFO",
         crate::model::Severity::Fail => "FAIL",
     }
+}
+
+fn write_artifact<T: Serialize>(
+    artifacts: Option<&PathBuf>,
+    json_out: Option<&PathBuf>,
+    name: &str,
+    payload: &T,
+) -> Result<()> {
+    if let Some(path) = json_out {
+        let data = serde_json::to_vec_pretty(payload)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, data)?;
+        return Ok(());
+    }
+    if let Some(dir) = artifacts {
+        let path = dir.join(name);
+        let data = serde_json::to_vec_pretty(payload)?;
+        fs::create_dir_all(dir)?;
+        fs::write(path, data)?;
+    }
+    Ok(())
+}
+
+fn expectation_counts(
+    retrievals: &[RetrievalResult],
+    queries: &[QuerySpec],
+    top_k: usize,
+) -> (usize, usize) {
+    let mut pass = 0;
+    let mut fail = 0;
+    for spec in queries {
+        if spec.expect_docs.is_empty() {
+            continue;
+        }
+        let result = retrievals.iter().find(|r| r.query_id == spec.id);
+        if let Some(r) = result {
+            let mut ok = false;
+            for doc in &spec.expect_docs {
+                if r.ranked.iter().any(|c| {
+                    crate::diagnostics::chunk_doc_id(&c.chunk_id) == *doc && c.rank <= top_k
+                }) {
+                    ok = true;
+                    break;
+                }
+            }
+            if ok {
+                pass += 1;
+            } else {
+                fail += 1;
+            }
+        } else {
+            fail += 1;
+        }
+    }
+    (pass, fail)
+}
+
+#[derive(Serialize, Clone)]
+struct ExpectationOutcome {
+    query_id: String,
+    expected: Vec<String>,
+    best_rank: Option<usize>,
+    top_docs: Vec<String>,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_doc_ranks: Option<Vec<RankEntry>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected_ranks: Option<Vec<RankEntry>>,
+}
+
+#[derive(Serialize, Clone)]
+struct RankEntry {
+    doc: String,
+    rank: usize,
+}
+
+fn expectation_outcomes(
+    retrievals: &[RetrievalResult],
+    queries: &[QuerySpec],
+    top_k: usize,
+) -> Vec<ExpectationOutcome> {
+    let mut out = Vec::new();
+    for spec in queries {
+        if spec.expect_docs.is_empty() {
+            continue;
+        }
+        let result = retrievals.iter().find(|r| r.query_id == spec.id);
+        let (best_rank, top_docs) = if let Some(r) = result {
+            let best = spec
+                .expect_docs
+                .iter()
+                .filter_map(|doc| {
+                    r.ranked
+                        .iter()
+                        .find(|c| crate::diagnostics::chunk_doc_id(&c.chunk_id) == *doc)
+                        .map(|c| c.rank)
+                })
+                .min();
+            let top_docs: Vec<String> = r
+                .ranked
+                .iter()
+                .take(3)
+                .map(|c| crate::diagnostics::chunk_doc_id(&c.chunk_id))
+                .collect();
+            (best, top_docs)
+        } else {
+            (None, Vec::new())
+        };
+
+        let top_doc_ranks = result.map(|r| {
+            r.ranked
+                .iter()
+                .take(3)
+                .map(|c| RankEntry {
+                    doc: crate::diagnostics::chunk_doc_id(&c.chunk_id),
+                    rank: c.rank,
+                })
+                .collect::<Vec<_>>()
+        });
+
+        let expected_ranks = result.map(|r| {
+            spec.expect_docs
+                .iter()
+                .filter_map(|doc| {
+                    r.ranked
+                        .iter()
+                        .find(|c| crate::diagnostics::chunk_doc_id(&c.chunk_id) == *doc)
+                        .map(|c| RankEntry {
+                            doc: doc.clone(),
+                            rank: c.rank,
+                        })
+                })
+                .collect::<Vec<_>>()
+        });
+
+        let status = if let Some(rank) = best_rank {
+            if rank <= top_k {
+                "PASS"
+            } else {
+                "FAIL"
+            }
+        } else {
+            "FAIL"
+        };
+        out.push(ExpectationOutcome {
+            query_id: spec.id.clone(),
+            expected: spec.expect_docs.clone(),
+            best_rank,
+            top_docs,
+            status: status.to_string(),
+            top_doc_ranks,
+            expected_ranks,
+        });
+    }
+    out
 }

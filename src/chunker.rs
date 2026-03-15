@@ -1,20 +1,15 @@
 use crate::config::Config;
 use crate::model::{Chunk, Document};
-use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub fn chunk_documents(docs: &[Document], config: &Config) -> Vec<Chunk> {
     let counter = AtomicUsize::new(0);
-    docs.par_iter()
+    docs.iter()
         .flat_map(|doc| chunk_single(doc, config, &counter))
         .collect()
 }
 
-fn chunk_single(
-    doc: &Document,
-    config: &Config,
-    counter: &AtomicUsize,
-) -> Vec<Chunk> {
+fn chunk_single(doc: &Document, config: &Config, counter: &AtomicUsize) -> Vec<Chunk> {
     let mut chunks = Vec::new();
     let mut buffer = String::new();
     let mut token_count = 0usize;

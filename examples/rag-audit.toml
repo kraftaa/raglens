@@ -1,0 +1,10 @@
+chunk_size = 200
+chunk_overlap = 30
+min_tokens = 40
+max_tokens = 1200
+top_k = 5
+dominant_threshold = 0.3
+low_sim_threshold = 0.35
+no_match_threshold = 0.25
+provider = "null"
+cache_dir = ".rag-audit-cache"

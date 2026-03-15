@@ -5,6 +5,22 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "rag-audit", version, about = "RAG retrieval readiness diagnostics", long_about = None)]
 pub struct Cli {
+    /// Optional config file (defaults to rag-audit.toml in CWD)
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
+    /// Override embedder provider: null | openai
+    #[arg(long, global = true)]
+    pub embedder: Option<String>,
+    /// Override cache directory
+    #[arg(long, global = true)]
+    pub cache_dir: Option<PathBuf>,
+    /// Write JSON artifacts to this directory (e.g., artifacts/)
+    #[arg(long, global = true)]
+    pub artifacts_dir: Option<PathBuf>,
+    /// Write single JSON output to this file (overrides artifacts_dir for that run)
+    #[arg(long, global = true)]
+    pub json_out: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -15,6 +31,9 @@ pub enum Commands {
     Readiness {
         /// Path to documents directory
         path: PathBuf,
+        /// Optional queries file (yaml or plain text) to include retrieval coverage/dominance
+        #[arg(long)]
+        queries: Option<PathBuf>,
         /// Output JSON instead of human report
         #[arg(long)]
         json: bool,
@@ -37,6 +56,9 @@ pub enum Commands {
     /// Topic coverage/imbalance detection
     Coverage {
         path: PathBuf,
+        /// Optional queries file for coverage evaluation
+        #[arg(long)]
+        queries: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
