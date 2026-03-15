@@ -1,3 +1,4 @@
+use crate::compare_runs::SimDiff;
 use crate::config::Config;
 use crate::model::{ChunkStats, Corpus, CoverageSummary, Finding, RetrievalResult};
 use crate::retrieval::{CompareReport, ExplanationReport, QuerySpec};
@@ -329,6 +330,46 @@ fn write_artifact<T: Serialize>(
         let data = serde_json::to_vec_pretty(payload)?;
         fs::create_dir_all(dir)?;
         fs::write(path, data)?;
+    }
+    Ok(())
+}
+
+pub fn print_run_comparison(
+    diff: &SimDiff,
+    artifacts: Option<&PathBuf>,
+    json_out: Option<&PathBuf>,
+    json: bool,
+) -> Result<()> {
+    write_artifact(artifacts, json_out, "compare_runs.json", diff)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(diff)?);
+        return Ok(());
+    }
+    println!("Retrieval comparison");
+    println!("====================");
+    println!();
+    println!(
+        "Queries: before {} | after {}",
+        diff.queries_before, diff.queries_after
+    );
+    println!(
+        "Avg top-1 similarity: before {:.3} | after {:.3}",
+        diff.avg_top1_similarity_before, diff.avg_top1_similarity_after
+    );
+    println!(
+        "Weak matches: before {} | after {}",
+        diff.weak_before, diff.weak_after
+    );
+    println!(
+        "No matches: before {} | after {}",
+        diff.no_match_before, diff.no_match_after
+    );
+    println!("\nTop-1 documents (counts):");
+    for d in &diff.top1_docs {
+        println!(
+            "- {}: {} -> {} (Δ {})",
+            d.doc_id, d.before, d.after, d.delta
+        );
     }
     Ok(())
 }

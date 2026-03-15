@@ -74,4 +74,14 @@ pub enum Commands {
         #[arg(long)]
         query: String,
     },
+    /// Compare two simulation JSON reports (before/after)
+    CompareRuns {
+        /// Baseline simulation JSON
+        baseline: PathBuf,
+        /// Improved simulation JSON
+        improved: PathBuf,
+        /// Output JSON diff instead of human table
+        #[arg(long)]
+        json: bool,
+    },
 }

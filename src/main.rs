@@ -1,5 +1,6 @@
 mod chunker;
 mod cli;
+mod compare_runs;
 mod config;
 mod diagnostics;
 mod embeddings;
@@ -51,6 +52,11 @@ fn main() -> Result<()> {
         Commands::Compare { path, query } => {
             run_compare(path, &config, artifacts, json_out, query)?
         }
+        Commands::CompareRuns {
+            baseline,
+            improved,
+            json,
+        } => run_compare_runs(baseline, improved, artifacts, json_out, json)?,
     }
 
     Ok(())
@@ -187,5 +193,17 @@ fn run_compare(
     let embedder = embeddings::build_embedder(config)?;
     let comparison = retrieval::compare_query(&corpus, embedder.as_ref(), &query, config)?;
     report::print_comparison(&query, &comparison, artifacts, json_out)?;
+    Ok(())
+}
+
+fn run_compare_runs(
+    baseline: PathBuf,
+    improved: PathBuf,
+    artifacts: Option<&PathBuf>,
+    json_out: Option<&PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let diff = compare_runs::compare_runs(&baseline, &improved)?;
+    report::print_run_comparison(&diff, artifacts, json_out, json)?;
     Ok(())
 }
