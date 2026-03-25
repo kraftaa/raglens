@@ -1,6 +1,6 @@
 use crate::compare_runs::SimDiff;
 use crate::config::Config;
-use crate::model::{ChunkStats, Corpus, CoverageSummary, Finding, RetrievalResult};
+use crate::model::{ChunkStats, ConfigSnapshot, Corpus, CoverageSummary, Finding, RetrievalResult};
 use crate::retrieval::{CompareReport, ExplanationReport, QuerySpec};
 use anyhow::Result;
 use serde::Serialize;
@@ -29,6 +29,7 @@ pub fn print_readiness(
         coverage,
         chunk_stats: Some(stats.clone()),
         sim_summary: sim_summary.cloned(),
+        config: Some(config_snapshot(config)),
     };
     write_artifact(artifacts, json_out, "readiness.json", &payload)?;
     if json {
@@ -86,6 +87,7 @@ pub fn print_simulation(
             config.low_sim_threshold,
             config.no_match_threshold,
         )),
+        config: Some(config_snapshot(config)),
     };
     write_artifact(artifacts, json_out, "simulation.json", &payload)?;
     if json {
@@ -142,6 +144,7 @@ pub fn print_chunks(
         coverage: None,
         chunk_stats: Some(stats.clone()),
         sim_summary: None,
+        config: None,
     };
     write_artifact(artifacts, json_out, "chunks.json", &payload)?;
     if json {
@@ -173,6 +176,7 @@ pub fn print_coverage(
     corpus: &Corpus,
     findings: &[Finding],
     coverage: Option<&CoverageSummary>,
+    config: &Config,
     artifacts: Option<&PathBuf>,
     json_out: Option<&PathBuf>,
     json: bool,
@@ -188,6 +192,7 @@ pub fn print_coverage(
         coverage,
         chunk_stats: None,
         sim_summary: None,
+        config: Some(config_snapshot(config)),
     };
     write_artifact(artifacts, json_out, "coverage.json", &payload)?;
     if json {
@@ -300,6 +305,8 @@ struct JsonReport<'a> {
     chunk_stats: Option<ChunkStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sim_summary: Option<crate::model::SimSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config: Option<ConfigSnapshot>,
 }
 
 fn slice_is_empty<T>(slice: &[T]) -> bool {
@@ -337,6 +344,20 @@ fn write_artifact<T: Serialize>(
         fs::write(path, data)?;
     }
     Ok(())
+}
+
+fn config_snapshot(cfg: &Config) -> ConfigSnapshot {
+    ConfigSnapshot {
+        chunk_size: cfg.chunk_size,
+        chunk_overlap: cfg.chunk_overlap,
+        min_tokens: cfg.min_tokens,
+        max_tokens: cfg.max_tokens,
+        top_k: cfg.top_k,
+        dominant_threshold: cfg.dominant_threshold,
+        low_sim_threshold: cfg.low_sim_threshold,
+        no_match_threshold: cfg.no_match_threshold,
+        embedder: format!("{:?}", cfg.embedder),
+    }
 }
 
 pub fn print_run_comparison(

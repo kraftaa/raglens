@@ -23,6 +23,7 @@ fn main() -> Result<()> {
     if let Some(cache) = cli.cache_dir {
         config.cache_dir = cache;
     }
+    config.override_thresholds(cli.low_sim_threshold, cli.no_match_threshold);
     if let Some(dir) = &cli.artifacts_dir {
         std::fs::create_dir_all(dir)?;
     }
@@ -160,10 +161,18 @@ fn run_coverage(
         let embedder = embeddings::build_embedder(config)?;
         let sim = retrieval::simulate_retrieval(&corpus, embedder.as_ref(), Some(&qpath), config)?;
         let summary = diagnostics::coverage_summary(&sim.results);
-        report::print_coverage(&corpus, &[], Some(&summary), artifacts, json_out, json)?;
+        report::print_coverage(
+            &corpus,
+            &[],
+            Some(&summary),
+            config,
+            artifacts,
+            json_out,
+            json,
+        )?;
     } else {
         let findings = diagnostics::analyze_topics(&corpus, config);
-        report::print_coverage(&corpus, &findings, None, artifacts, json_out, json)?;
+        report::print_coverage(&corpus, &findings, None, config, artifacts, json_out, json)?;
     }
     Ok(())
 }

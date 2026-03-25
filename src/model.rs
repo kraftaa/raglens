@@ -114,3 +114,16 @@ pub enum Severity {
     Info,
     Fail,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigSnapshot {
+    pub chunk_size: usize,
+    pub chunk_overlap: usize,
+    pub min_tokens: usize,
+    pub max_tokens: usize,
+    pub top_k: usize,
+    pub dominant_threshold: f32,
+    pub low_sim_threshold: f32,
+    pub no_match_threshold: f32,
+    pub embedder: String,
+}
