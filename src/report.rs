@@ -43,8 +43,13 @@ pub fn print_readiness(
     println!("Chunks: {}", corpus.chunks.len());
     println!();
     println!(
-        "Chunk config: size {} overlap {}",
-        config.chunk_size, config.chunk_overlap
+        "Chunk config: size {} overlap {} | top_k {} | thresholds low {:.2} no-match {:.2} | embedder {:?}",
+        config.chunk_size,
+        config.chunk_overlap,
+        config.top_k,
+        config.low_sim_threshold,
+        config.no_match_threshold,
+        config.embedder
     );
     println!(
         "Chunk size avg {:.1} | min {} | max {} | p50 {} | p95 {}",

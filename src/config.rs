@@ -132,6 +132,15 @@ impl Config {
         }
         Ok(())
     }
+
+    pub fn override_thresholds(&mut self, low: Option<f32>, no_match: Option<f32>) {
+        if let Some(v) = low {
+            self.low_sim_threshold = v;
+        }
+        if let Some(v) = no_match {
+            self.no_match_threshold = v;
+        }
+    }
 }
 
 fn default_openai_base() -> String {

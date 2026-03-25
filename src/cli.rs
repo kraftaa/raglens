@@ -14,6 +14,12 @@ pub struct Cli {
     /// Override cache directory
     #[arg(long, global = true)]
     pub cache_dir: Option<PathBuf>,
+    /// Override low similarity threshold (default from config)
+    #[arg(long, global = true)]
+    pub low_sim_threshold: Option<f32>,
+    /// Override no-match threshold (default from config)
+    #[arg(long, global = true)]
+    pub no_match_threshold: Option<f32>,
     /// Write JSON artifacts to this directory (e.g., artifacts/)
     #[arg(long, global = true)]
     pub artifacts_dir: Option<PathBuf>,
