@@ -117,6 +117,13 @@ Queries:
 - Detecting dominant documents
 - Testing query coverage of a knowledge base
 
+## CI gating example
+```
+rag-audit simulate docs --queries queries.txt --json-out report.json
+jq 'select(.sim_summary.low_similarity_queries==0 and .sim_summary.no_match_queries==0)' report.json >/dev/null \
+  || { echo "Retrieval coverage failed"; exit 1; }
+```
+
 ## JSON artifacts (per command)
 `--json-out file` writes that command’s report; `--artifacts-dir dir` writes standard filenames:
 - `readiness.json`: findings + chunk_stats

@@ -16,7 +16,14 @@ struct SimSummary {
     avg_top1_similarity: f32,
     low_similarity_queries: usize,
     no_match_queries: usize,
+    #[serde(default)]
     top1_freq: Vec<DocFreq>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    low_similarity_query_ids: Vec<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    no_match_query_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -35,12 +35,32 @@ fn main() -> Result<()> {
             path,
             queries,
             json,
-        } => run_readiness(path, queries, &config, artifacts, json_out, json)?,
+        } => run_readiness(
+            path,
+            queries,
+            &config,
+            artifacts,
+            json_out,
+            json,
+            cli.fail_on_dominant,
+            cli.fail_on_weak,
+            cli.fail_on_no_match,
+        )?,
         Commands::Simulate {
             path,
             queries,
             json,
-        } => run_simulate(path, queries, &config, artifacts, json_out, json)?,
+        } => run_simulate(
+            path,
+            queries,
+            &config,
+            artifacts,
+            json_out,
+            json,
+            cli.fail_on_dominant,
+            cli.fail_on_weak,
+            cli.fail_on_no_match,
+        )?,
         Commands::Chunks { path, json } => run_chunks(path, &config, artifacts, json_out, json)?,
         Commands::Coverage {
             path,
@@ -80,6 +100,9 @@ fn run_readiness(
     artifacts: Option<&PathBuf>,
     json_out: Option<&PathBuf>,
     json: bool,
+    fail_on_dominant: Option<f32>,
+    fail_on_weak: Option<usize>,
+    fail_on_no_match: Option<usize>,
 ) -> Result<()> {
     let corpus = prepare_corpus(path, config)?;
     let (stats, findings_chunks) = diagnostics::chunk_stats(&corpus, config);
@@ -92,8 +115,20 @@ fn run_readiness(
         let sim = retrieval::simulate_retrieval(&corpus, embedder.as_ref(), Some(&qpath), config)?;
         let retrieval_findings = diagnostics::analyze_retrieval(&sim.results, &sim.queries, config);
         findings.extend(retrieval_findings);
-        sim_summary = Some(diagnostics::simulate_summary(&sim.results, 0.35, 0.25));
+        sim_summary = Some(diagnostics::simulate_summary(
+            &sim.results,
+            config.low_sim_threshold,
+            config.no_match_threshold,
+        ));
         coverage = Some(diagnostics::coverage_summary(&sim.results));
+        apply_fail_flags(
+            fail_on_dominant,
+            fail_on_weak,
+            fail_on_no_match,
+            &sim_summary,
+            &sim.results,
+            config,
+        )?;
     }
     report::print_readiness(
         &corpus,
@@ -116,6 +151,9 @@ fn run_simulate(
     artifacts: Option<&PathBuf>,
     json_out: Option<&PathBuf>,
     json: bool,
+    fail_on_dominant: Option<f32>,
+    fail_on_weak: Option<usize>,
+    fail_on_no_match: Option<usize>,
 ) -> Result<()> {
     let corpus = prepare_corpus(path, config)?;
     let embedder = embeddings::build_embedder(config)?;
@@ -131,6 +169,19 @@ fn run_simulate(
         artifacts,
         json_out,
         json,
+    )?;
+    let summary = diagnostics::simulate_summary(
+        &sim.results,
+        config.low_sim_threshold,
+        config.no_match_threshold,
+    );
+    apply_fail_flags(
+        fail_on_dominant,
+        fail_on_weak,
+        fail_on_no_match,
+        &Some(summary),
+        &sim.results,
+        config,
     )?;
     Ok(())
 }
@@ -214,5 +265,49 @@ fn run_compare_runs(
 ) -> Result<()> {
     let diff = compare_runs::compare_runs(&baseline, &improved)?;
     report::print_run_comparison(&diff, artifacts, json_out, json)?;
+    Ok(())
+}
+
+fn apply_fail_flags(
+    fail_on_dominant: Option<f32>,
+    fail_on_weak: Option<usize>,
+    fail_on_no_match: Option<usize>,
+    sim_summary: &Option<crate::model::SimSummary>,
+    retrievals: &[crate::model::RetrievalResult],
+    config: &Config,
+) -> Result<()> {
+    if sim_summary.is_none() {
+        return Ok(());
+    }
+    let summary = sim_summary.as_ref().unwrap();
+    if let Some(thresh) = fail_on_weak {
+        if summary.low_similarity_queries > thresh {
+            anyhow::bail!(
+                "Fail: weak queries {} > threshold {}",
+                summary.low_similarity_queries,
+                thresh
+            );
+        }
+    }
+    if let Some(thresh) = fail_on_no_match {
+        if summary.no_match_queries > thresh {
+            anyhow::bail!(
+                "Fail: no-match queries {} > threshold {}",
+                summary.no_match_queries,
+                thresh
+            );
+        }
+    }
+    if let Some(thresh) = fail_on_dominant {
+        if let Some(max_rate) = diagnostics::max_dominant_rate(retrievals, config) {
+            if max_rate > thresh {
+                anyhow::bail!(
+                    "Fail: dominant doc rate {:.2} > threshold {:.2}",
+                    max_rate,
+                    thresh
+                );
+            }
+        }
+    }
     Ok(())
 }

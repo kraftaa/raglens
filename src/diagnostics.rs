@@ -61,26 +61,60 @@ fn analyze_dominant_docs(retrievals: &[RetrievalResult], config: &Config) -> Vec
     if retrievals.is_empty() {
         return findings;
     }
-    let mut freq: IndexMap<String, usize> = IndexMap::new();
+    let mut freq_topk: IndexMap<String, usize> = IndexMap::new();
+    let mut freq_top1: IndexMap<String, usize> = IndexMap::new();
     for result in retrievals {
+        if let Some(top) = result.ranked.first() {
+            let doc_id = chunk_doc_id(&top.chunk_id);
+            *freq_top1.entry(doc_id).or_insert(0) += 1;
+        }
         for ranked in &result.ranked {
             let doc_id = chunk_doc_id(&ranked.chunk_id);
-            *freq.entry(doc_id).or_insert(0) += 1;
+            *freq_topk.entry(doc_id).or_insert(0) += 1;
         }
     }
     let total_queries = retrievals.len().max(1);
-    for (doc, count) in freq.iter() {
+    for (doc, count) in freq_topk.iter() {
         let rate = *count as f32 / total_queries as f32;
         if rate >= config.dominant_threshold {
+            let top1_rate = freq_top1
+                .get(doc)
+                .map(|c| *c as f32 / total_queries as f32)
+                .unwrap_or(0.0);
             findings.push(Finding {
                 severity: Severity::High,
                 code: "DOMINANT_DOCUMENT".to_string(),
-                message: format!("{doc} retrieved in {:.0}%", rate * 100.0),
-                data: IndexMap::from([("doc".into(), json!(doc)), ("rate".into(), json!(rate))]),
+                message: format!(
+                    "{doc} retrieved in {:.0}% of queries (top-k), {:.0}% top-1",
+                    rate * 100.0,
+                    top1_rate * 100.0
+                ),
+                data: IndexMap::from([
+                    ("doc".into(), json!(doc)),
+                    ("rate_topk".into(), json!(rate)),
+                    ("rate_top1".into(), json!(top1_rate)),
+                ]),
             });
         }
     }
     findings
+}
+
+pub fn max_dominant_rate(retrievals: &[RetrievalResult], _config: &Config) -> Option<f32> {
+    if retrievals.is_empty() {
+        return None;
+    }
+    let mut freq: IndexMap<String, usize> = IndexMap::new();
+    for result in retrievals {
+        if let Some(top) = result.ranked.first() {
+            let doc_id = chunk_doc_id(&top.chunk_id);
+            *freq.entry(doc_id).or_insert(0) += 1;
+        }
+    }
+    let total = retrievals.len() as f32;
+    freq.values()
+        .map(|c| *c as f32 / total)
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
 }
 
 pub fn coverage_summary(results: &[RetrievalResult]) -> crate::model::CoverageSummary {
@@ -115,9 +149,11 @@ pub fn simulate_summary(
             summary.avg_top1_similarity += top.score;
             if top.score < low_threshold {
                 summary.low_similarity_queries += 1;
+                summary.low_similarity_query_ids.push(r.query_id.clone());
             }
             if top.score < no_match_threshold {
                 summary.no_match_queries += 1;
+                summary.no_match_query_ids.push(r.query_id.clone());
             }
         }
         for item in r.ranked.iter().take(3) {
