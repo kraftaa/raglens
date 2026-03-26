@@ -126,4 +126,5 @@ pub struct ConfigSnapshot {
     pub low_sim_threshold: f32,
     pub no_match_threshold: f32,
     pub embedder: String,
+    pub seed: u64,
 }

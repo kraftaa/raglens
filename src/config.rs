@@ -19,6 +19,7 @@ pub struct Config {
     pub max_retries: usize,
     pub retry_backoff_ms: u64,
     pub request_timeout_ms: u64,
+    pub seed: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -48,6 +49,7 @@ struct RawConfig {
     max_retries: Option<usize>,
     retry_backoff_ms: Option<u64>,
     request_timeout_ms: Option<u64>,
+    seed: Option<u64>,
 }
 
 impl Default for Config {
@@ -67,6 +69,7 @@ impl Default for Config {
             max_retries: 3,
             retry_backoff_ms: 300,
             request_timeout_ms: 15_000,
+            seed: 42,
         }
     }
 }
@@ -105,6 +108,7 @@ impl Config {
             max_retries: raw.max_retries.unwrap_or(default.max_retries),
             retry_backoff_ms: raw.retry_backoff_ms.unwrap_or(default.retry_backoff_ms),
             request_timeout_ms: raw.request_timeout_ms.unwrap_or(default.request_timeout_ms),
+            seed: raw.seed.unwrap_or(default.seed),
         })
     }
 
@@ -140,6 +144,10 @@ impl Config {
         if let Some(v) = no_match {
             self.no_match_threshold = v;
         }
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.seed
     }
 }
 

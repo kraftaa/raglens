@@ -357,6 +357,7 @@ fn config_snapshot(cfg: &Config) -> ConfigSnapshot {
         low_sim_threshold: cfg.low_sim_threshold,
         no_match_threshold: cfg.no_match_threshold,
         embedder: format!("{:?}", cfg.embedder),
+        seed: cfg.seed,
     }
 }
 
