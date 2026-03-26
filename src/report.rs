@@ -101,6 +101,15 @@ pub fn print_simulation(
     println!("Queries: {}", retrievals.len());
     println!("Documents: {}", corpus.documents.len());
     println!("Chunks: {}", corpus.chunks.len());
+    println!(
+        "Config: size {} overlap {} | top_k {} | thresholds low {:.2} no-match {:.2} | embedder {:?}",
+        config.chunk_size,
+        config.chunk_overlap,
+        config.top_k,
+        config.low_sim_threshold,
+        config.no_match_threshold,
+        config.embedder
+    );
     println!("PASS: {pass}  FAIL: {fail}");
     println!();
     if !queries.is_empty() {
@@ -205,6 +214,15 @@ pub fn print_coverage(
         println!();
         println!("Queries: {}", cov.queries);
         println!("Good: {}  Weak: {}  None: {}", cov.good, cov.weak, cov.none);
+        println!(
+            "Config: size {} overlap {} | top_k {} | thresholds low {:.2} no-match {:.2} | embedder {:?}",
+            config.chunk_size,
+            config.chunk_overlap,
+            config.top_k,
+            config.low_sim_threshold,
+            config.no_match_threshold,
+            config.embedder
+        );
     } else {
         println!("Topic Coverage");
         println!("==============");

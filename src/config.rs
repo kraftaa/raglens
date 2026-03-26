@@ -146,6 +146,7 @@ impl Config {
         }
     }
 
+    #[allow(dead_code)]
     pub fn seed(&self) -> u64 {
         self.seed
     }
