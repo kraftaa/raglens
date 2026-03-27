@@ -283,18 +283,20 @@ fn apply_fail_flags(
     if let Some(thresh) = fail_on_weak {
         if summary.low_similarity_queries > thresh {
             anyhow::bail!(
-                "Fail: weak queries {} > threshold {}",
+                "Fail: weak queries {} > threshold {} (low_sim_threshold {:.2})",
                 summary.low_similarity_queries,
-                thresh
+                thresh,
+                config.low_sim_threshold
             );
         }
     }
     if let Some(thresh) = fail_on_no_match {
         if summary.no_match_queries > thresh {
             anyhow::bail!(
-                "Fail: no-match queries {} > threshold {}",
+                "Fail: no-match queries {} > threshold {} (no_match_threshold {:.2})",
                 summary.no_match_queries,
-                thresh
+                thresh,
+                config.no_match_threshold
             );
         }
     }

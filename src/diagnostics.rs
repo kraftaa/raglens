@@ -369,8 +369,13 @@ pub fn analyze_metadata(corpus: &Corpus, config: &Config) -> Vec<Finding> {
             .filter(|d| !d.metadata.contains_key(key))
             .count();
         if missing > 0 {
+            let severity = if missing * 2 > corpus.documents.len() {
+                Severity::High
+            } else {
+                Severity::Low
+            };
             findings.push(Finding {
-                severity: Severity::Low,
+                severity,
                 code: "MISSING_METADATA".into(),
                 message: format!("{missing} docs missing {key}"),
                 data: IndexMap::new(),
