@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// RAG retrieval diagnostics CLI
@@ -26,6 +26,15 @@ pub struct Cli {
     /// Write single JSON output to this file (overrides artifacts_dir for that run)
     #[arg(long, global = true)]
     pub json_out: Option<PathBuf>,
+    /// Fail if dominant document rate exceeds this value (0-1)
+    #[arg(long, global = true)]
+    pub fail_on_dominant: Option<f32>,
+    /// Fail if weak (low similarity) queries exceed this count
+    #[arg(long, global = true)]
+    pub fail_on_weak: Option<usize>,
+    /// Fail if no-match queries exceed this count
+    #[arg(long, global = true)]
+    pub fail_on_no_match: Option<usize>,
 
     #[command(subcommand)]
     pub command: Commands,
@@ -89,8 +98,17 @@ pub enum Commands {
         baseline: PathBuf,
         /// Improved simulation JSON
         improved: PathBuf,
+        /// Output format: summary or table
+        #[arg(long, value_enum, default_value_t = CompareFormat::Summary)]
+        format: CompareFormat,
         /// Output JSON diff instead of human table
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum CompareFormat {
+    Summary,
+    Table,
 }

@@ -12,7 +12,7 @@ mod retrieval;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, CompareFormat};
 use config::Config;
 use std::path::PathBuf;
 
@@ -76,8 +76,9 @@ fn main() -> Result<()> {
         Commands::CompareRuns {
             baseline,
             improved,
+            format,
             json,
-        } => run_compare_runs(baseline, improved, artifacts, json_out, json)?,
+        } => run_compare_runs(baseline, improved, format, artifacts, json_out, json)?,
     }
 
     Ok(())
@@ -259,12 +260,13 @@ fn run_compare(
 fn run_compare_runs(
     baseline: PathBuf,
     improved: PathBuf,
+    format: CompareFormat,
     artifacts: Option<&PathBuf>,
     json_out: Option<&PathBuf>,
     json: bool,
 ) -> Result<()> {
     let diff = compare_runs::compare_runs(&baseline, &improved)?;
-    report::print_run_comparison(&diff, artifacts, json_out, json)?;
+    report::print_run_comparison(&diff, format, artifacts, json_out, json)?;
     Ok(())
 }
 

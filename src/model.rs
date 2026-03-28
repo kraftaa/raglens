@@ -77,6 +77,8 @@ pub struct SimSummary {
     pub no_match_queries: usize,
     pub top1_freq: Vec<DocFreq>,
     pub top3_freq: Vec<DocFreq>,
+    pub low_similarity_query_ids: Vec<String>,
+    pub no_match_query_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -72,6 +72,7 @@ cargo build --release
 - `simulate <docs> --queries queries.txt [--json-out file]`: run queries, report dominant docs, low/no-match counts, similarity stats.
 - `explain <docs> --query "..." [--json-out file]`: EXPLAIN-style breakdown of why top docs ranked.
 - `coverage <docs> [--queries queries.txt] [--json-out file]`: with queries → Good/Weak/None coverage; without queries → topic imbalance.
+- `compare-runs baseline.json improved.json [--format summary|table] [--json-out file]`: compare before/after simulation artifacts.
 
 Add `--artifacts-dir artifacts/` to save standard JSON files per command (e.g., `artifacts/readiness.json`, `simulation.json`, `chunks.json`, `explain.json`, `compare_runs.json`).
 

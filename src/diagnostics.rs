@@ -118,8 +118,10 @@ pub fn max_dominant_rate(retrievals: &[RetrievalResult], _config: &Config) -> Op
 }
 
 pub fn coverage_summary(results: &[RetrievalResult]) -> crate::model::CoverageSummary {
-    let mut summary = crate::model::CoverageSummary::default();
-    summary.queries = results.len();
+    let mut summary = crate::model::CoverageSummary {
+        queries: results.len(),
+        ..Default::default()
+    };
     for r in results {
         let top_score = r.ranked.first().map(|c| c.score).unwrap_or(0.0);
         if top_score >= 0.6 {
@@ -138,8 +140,10 @@ pub fn simulate_summary(
     low_threshold: f32,
     no_match_threshold: f32,
 ) -> SimSummary {
-    let mut summary = SimSummary::default();
-    summary.queries = retrievals.len();
+    let mut summary = SimSummary {
+        queries: retrievals.len(),
+        ..Default::default()
+    };
 
     let mut top1_freq: IndexMap<String, usize> = IndexMap::new();
     let mut top3_freq: IndexMap<String, usize> = IndexMap::new();
@@ -425,9 +429,9 @@ fn ends_mid_sentence(text: &str) -> bool {
         if ['.', '!', '?'].contains(&c) {
             // find next visible char after punctuation
             let mut next_non_ws = None;
-            for j in idx + 1..len {
-                if !chars[j].is_whitespace() {
-                    next_non_ws = Some(chars[j]);
+            for ch in chars.iter().take(len).skip(idx + 1) {
+                if !ch.is_whitespace() {
+                    next_non_ws = Some(*ch);
                     break;
                 }
             }
@@ -479,10 +483,11 @@ fn overlap_tokens(a: &str, b: &str) -> usize {
     let b_tokens: Vec<&str> = b.split_whitespace().collect();
     let max_check = a_tokens.len().min(b_tokens.len()).min(200);
     for k in (1..=max_check).rev() {
-        if a_tokens.len() >= k && b_tokens.len() >= k {
-            if a_tokens[a_tokens.len() - k..] == b_tokens[..k] {
-                return k;
-            }
+        if a_tokens.len() >= k
+            && b_tokens.len() >= k
+            && a_tokens[a_tokens.len() - k..] == b_tokens[..k]
+        {
+            return k;
         }
     }
     0

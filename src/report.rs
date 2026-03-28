@@ -1,3 +1,4 @@
+use crate::cli::CompareFormat;
 use crate::compare_runs::SimDiff;
 use crate::config::Config;
 use crate::model::{ChunkStats, ConfigSnapshot, Corpus, CoverageSummary, Finding, RetrievalResult};
@@ -115,8 +116,8 @@ pub fn print_simulation(
     if !queries.is_empty() {
         println!("Expectations (top-3 preview):");
         println!(
-            "{:<12} {:<6} {:<10} {:<20} {}",
-            "query", "stat", "best_rank", "expected", "top3"
+            "{:<12} {:<6} {:<10} {:<20} top3",
+            "query", "stat", "best_rank", "expected"
         );
         for outcome in expectation_outcomes(retrievals, queries, config.top_k) {
             println!(
@@ -127,6 +128,31 @@ pub fn print_simulation(
                 outcome.expected,
                 outcome.top_docs
             );
+        }
+        println!();
+    }
+    if !payload
+        .sim_summary
+        .as_ref()
+        .map(|s| !s.low_similarity_query_ids.is_empty() || !s.no_match_query_ids.is_empty())
+        .unwrap_or(false)
+    {
+        println!("Weak/no-match queries:");
+        if let Some(sum) = &payload.sim_summary {
+            if !sum.low_similarity_query_ids.is_empty() {
+                println!(
+                    "  weak ({:.2}): {:?}",
+                    config.low_sim_threshold,
+                    sample_ids(&sum.low_similarity_query_ids)
+                );
+            }
+            if !sum.no_match_query_ids.is_empty() {
+                println!(
+                    "  no-match ({:.2}): {:?}",
+                    config.no_match_threshold,
+                    sample_ids(&sum.no_match_query_ids)
+                );
+            }
         }
         println!();
     }
@@ -379,8 +405,13 @@ fn config_snapshot(cfg: &Config) -> ConfigSnapshot {
     }
 }
 
+fn sample_ids(ids: &[String]) -> Vec<String> {
+    ids.iter().take(3).cloned().collect()
+}
+
 pub fn print_run_comparison(
     diff: &SimDiff,
+    format: CompareFormat,
     artifacts: Option<&PathBuf>,
     json_out: Option<&PathBuf>,
     json: bool,
@@ -390,31 +421,64 @@ pub fn print_run_comparison(
         println!("{}", serde_json::to_string_pretty(diff)?);
         return Ok(());
     }
-    println!("Retrieval comparison");
-    println!("====================");
-    println!();
-    println!(
-        "Queries: before {} | after {}",
-        diff.queries_before, diff.queries_after
-    );
-    println!(
-        "Avg top-1 similarity: before {:.3} | after {:.3}",
-        diff.avg_top1_similarity_before, diff.avg_top1_similarity_after
-    );
-    println!(
-        "Weak matches: before {} | after {}",
-        diff.weak_before, diff.weak_after
-    );
-    println!(
-        "No matches: before {} | after {}",
-        diff.no_match_before, diff.no_match_after
-    );
-    println!("\nTop-1 documents (counts):");
-    for d in &diff.top1_docs {
-        println!(
-            "- {}: {} -> {} (Δ {})",
-            d.doc_id, d.before, d.after, d.delta
-        );
+    match format {
+        CompareFormat::Summary => {
+            println!("Retrieval comparison");
+            println!("====================");
+            println!();
+            println!(
+                "Queries: before {} | after {}",
+                diff.queries_before, diff.queries_after
+            );
+            println!(
+                "Avg top-1 similarity: before {:.3} | after {:.3}",
+                diff.avg_top1_similarity_before, diff.avg_top1_similarity_after
+            );
+            println!(
+                "Weak matches: before {} | after {}",
+                diff.weak_before, diff.weak_after
+            );
+            println!(
+                "No matches: before {} | after {}",
+                diff.no_match_before, diff.no_match_after
+            );
+            println!("\nTop-1 documents (counts):");
+            for d in &diff.top1_docs {
+                println!(
+                    "- {}: {} -> {} (Δ {})",
+                    d.doc_id, d.before, d.after, d.delta
+                );
+            }
+        }
+        CompareFormat::Table => {
+            println!("Metric                     Before   After   Delta");
+            println!("-------------------------------------------------");
+            println!(
+                "Avg top-1 similarity       {:.3}   {:.3}   {:+.3}",
+                diff.avg_top1_similarity_before,
+                diff.avg_top1_similarity_after,
+                diff.avg_top1_similarity_after - diff.avg_top1_similarity_before
+            );
+            println!(
+                "Weak matches               {:>6}   {:>5}   {:+}",
+                diff.weak_before,
+                diff.weak_after,
+                diff.weak_after as isize - diff.weak_before as isize
+            );
+            println!(
+                "No matches                 {:>6}   {:>5}   {:+}",
+                diff.no_match_before,
+                diff.no_match_after,
+                diff.no_match_after as isize - diff.no_match_before as isize
+            );
+            println!("\nTop-1 document deltas:");
+            for d in &diff.top1_docs {
+                println!(
+                    "{:<24} {:>6} -> {:<6} ({:+})",
+                    d.doc_id, d.before, d.after, d.delta
+                );
+            }
+        }
     }
     Ok(())
 }
