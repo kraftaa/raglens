@@ -8,6 +8,13 @@ use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Clone, Copy)]
+pub struct OutputOpts<'a> {
+    pub artifacts: Option<&'a PathBuf>,
+    pub json_out: Option<&'a PathBuf>,
+    pub json: bool,
+}
+
 pub fn print_readiness(
     corpus: &Corpus,
     findings: &[Finding],
@@ -15,11 +22,10 @@ pub fn print_readiness(
     sim_summary: Option<&crate::model::SimSummary>,
     coverage: Option<&CoverageSummary>,
     config: &crate::config::Config,
-    artifacts: Option<&PathBuf>,
-    json_out: Option<&PathBuf>,
-    json: bool,
+    output: OutputOpts<'_>,
 ) -> Result<()> {
     let payload = JsonReport {
+        meta: report_meta("readiness"),
         documents: corpus.documents.len(),
         chunks: corpus.chunks.len(),
         passes: None,
@@ -32,8 +38,8 @@ pub fn print_readiness(
         sim_summary: sim_summary.cloned(),
         config: Some(config_snapshot(config)),
     };
-    write_artifact(artifacts, json_out, "readiness.json", &payload)?;
-    if json {
+    write_artifact(output, "readiness.json", &payload)?;
+    if output.json {
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
@@ -67,20 +73,27 @@ pub fn print_simulation(
     queries: &[QuerySpec],
     config: &Config,
     findings: &[Finding],
-    artifacts: Option<&PathBuf>,
-    json_out: Option<&PathBuf>,
-    json: bool,
+    output: OutputOpts<'_>,
 ) -> Result<()> {
-    let (pass, fail) = expectation_counts(retrievals, queries, config.top_k);
+    let expectation_rows = expectation_outcomes(retrievals, queries, config.top_k);
+    let pass = expectation_rows
+        .iter()
+        .filter(|r| r.status == "PASS")
+        .count();
+    let fail = expectation_rows
+        .iter()
+        .filter(|r| r.status == "FAIL")
+        .count();
 
     let payload = JsonReport {
+        meta: report_meta("simulate"),
         documents: corpus.documents.len(),
         chunks: corpus.chunks.len(),
         passes: Some(pass),
         fails: Some(fail),
         findings,
         retrievals,
-        expectations: Some(expectation_outcomes(retrievals, queries, config.top_k)),
+        expectations: Some(expectation_rows.clone()),
         coverage: None,
         chunk_stats: None,
         sim_summary: Some(crate::diagnostics::simulate_summary(
@@ -90,8 +103,8 @@ pub fn print_simulation(
         )),
         config: Some(config_snapshot(config)),
     };
-    write_artifact(artifacts, json_out, "simulation.json", &payload)?;
-    if json {
+    write_artifact(output, "simulation.json", &payload)?;
+    if output.json {
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
@@ -113,25 +126,25 @@ pub fn print_simulation(
     );
     println!("PASS: {pass}  FAIL: {fail}");
     println!();
-    if !queries.is_empty() {
+    if !expectation_rows.is_empty() {
         println!("Expectations (top-3 preview):");
         println!(
             "{:<12} {:<6} {:<10} {:<20} top3",
             "query", "stat", "best_rank", "expected"
         );
-        for outcome in expectation_outcomes(retrievals, queries, config.top_k) {
+        for outcome in expectation_rows {
+            let best_rank = outcome
+                .best_rank
+                .map(|r| r.to_string())
+                .unwrap_or_else(|| "-".to_string());
             println!(
-                "{:<12} {:<6} {:<10?} {:<20?} {:?}",
-                outcome.query_id,
-                outcome.status,
-                outcome.best_rank,
-                outcome.expected,
-                outcome.top_docs
+                "{:<12} {:<6} {:<10} {:<20?} {:?}",
+                outcome.query_id, outcome.status, best_rank, outcome.expected, outcome.top_docs
             );
         }
         println!();
     }
-    if !payload
+    if payload
         .sim_summary
         .as_ref()
         .map(|s| !s.low_similarity_query_ids.is_empty() || !s.no_match_query_ids.is_empty())
@@ -164,11 +177,11 @@ pub fn print_chunks(
     corpus: &Corpus,
     findings: &[Finding],
     stats: &ChunkStats,
-    artifacts: Option<&PathBuf>,
-    json_out: Option<&PathBuf>,
-    json: bool,
+    config: &Config,
+    output: OutputOpts<'_>,
 ) -> Result<()> {
     let payload = JsonReport {
+        meta: report_meta("chunks"),
         documents: corpus.documents.len(),
         chunks: corpus.chunks.len(),
         passes: None,
@@ -181,8 +194,8 @@ pub fn print_chunks(
         sim_summary: None,
         config: None,
     };
-    write_artifact(artifacts, json_out, "chunks.json", &payload)?;
-    if json {
+    write_artifact(output, "chunks.json", &payload)?;
+    if output.json {
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
@@ -196,9 +209,11 @@ pub fn print_chunks(
     println!("Chunks: {}", corpus.chunks.len());
     println!("Avg tokens: {:.1}", avg_tokens);
     println!(
-        "Large (>800): {} ({:.0}%) | Small (<100): {} ({:.0}%)",
+        "Large (>{}): {} ({:.0}%) | Small (<{}): {} ({:.0}%)",
+        config.max_tokens,
         large,
         (large as f32 / total.max(1.0)) * 100.0,
+        config.min_tokens,
         small,
         (small as f32 / total.max(1.0)) * 100.0
     );
@@ -212,11 +227,10 @@ pub fn print_coverage(
     findings: &[Finding],
     coverage: Option<&CoverageSummary>,
     config: &Config,
-    artifacts: Option<&PathBuf>,
-    json_out: Option<&PathBuf>,
-    json: bool,
+    output: OutputOpts<'_>,
 ) -> Result<()> {
     let payload = JsonReport {
+        meta: report_meta("coverage"),
         documents: corpus.documents.len(),
         chunks: corpus.chunks.len(),
         passes: coverage.map(|c| c.good),
@@ -229,8 +243,8 @@ pub fn print_coverage(
         sim_summary: None,
         config: Some(config_snapshot(config)),
     };
-    write_artifact(artifacts, json_out, "coverage.json", &payload)?;
-    if json {
+    write_artifact(output, "coverage.json", &payload)?;
+    if output.json {
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
@@ -261,10 +275,14 @@ pub fn print_coverage(
 pub fn print_explanation(
     query: &str,
     report: &ExplanationReport,
-    artifacts: Option<&PathBuf>,
-    json_out: Option<&PathBuf>,
+    output: OutputOpts<'_>,
 ) -> Result<()> {
-    write_artifact(artifacts, json_out, "explain.json", report)?;
+    let payload = ExplainJson {
+        meta: report_meta("explain"),
+        query,
+        report,
+    };
+    write_artifact(output, "explain.json", &payload)?;
     println!("Retrieval Explanation");
     println!("=====================");
     println!();
@@ -276,28 +294,32 @@ pub fn print_explanation(
         println!("  components:");
         println!("    semantic: {:.3}", item.explanation.similarity);
         println!(
-            "    keyword overlap: {} ({:.2})",
-            item.explanation.keyword_overlap, item.explanation.keyword_overlap_norm
+            "    keyword overlap: {} ({:.2}) | keyword boost: {:.3}",
+            item.explanation.keyword_overlap,
+            item.explanation.keyword_overlap_norm,
+            item.explanation.keyword_boost
         );
         println!(
             "    metadata boost: {:.3} | length penalty: {:.3}",
             item.explanation.metadata_boost, item.explanation.length_penalty
         );
         println!(
-            "    phrase match: {} | tokens: {}",
-            item.explanation.phrase_match, item.explanation.token_count
+            "    phrase match: {} | phrase boost: {:.3} | tokens: {}",
+            item.explanation.phrase_match,
+            item.explanation.phrase_boost,
+            item.explanation.token_count
         );
     }
     Ok(())
 }
 
-pub fn print_comparison(
-    query: &str,
-    report: &CompareReport,
-    artifacts: Option<&PathBuf>,
-    json_out: Option<&PathBuf>,
-) -> Result<()> {
-    write_artifact(artifacts, json_out, "compare.json", report)?;
+pub fn print_comparison(query: &str, report: &CompareReport, output: OutputOpts<'_>) -> Result<()> {
+    let payload = CompareQueryJson {
+        meta: report_meta("compare-query"),
+        query,
+        report,
+    };
+    write_artifact(output, "compare.json", &payload)?;
     println!("Retrieval Compare");
     println!("=================");
     println!();
@@ -305,9 +327,10 @@ pub fn print_comparison(
     println!();
     for item in &report.ranked {
         println!("{} {} (doc: {})", item.rank, item.chunk_id, item.doc_id);
-        println!("  similarity: {:.3}", item.score);
+        println!("  score: {:.3}", item.score);
         println!(
-            "  keyword overlap: {} | phrase match: {} | tokens: {}",
+            "  semantic: {:.3} | keyword overlap: {} | phrase match: {} | tokens: {}",
+            item.explanation.similarity,
             item.explanation.keyword_overlap,
             item.explanation.phrase_match,
             item.explanation.token_count
@@ -332,6 +355,7 @@ fn print_findings(findings: &[Finding]) {
 
 #[derive(Serialize)]
 struct JsonReport<'a> {
+    meta: ReportMeta,
     documents: usize,
     chunks: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -353,6 +377,34 @@ struct JsonReport<'a> {
     config: Option<ConfigSnapshot>,
 }
 
+#[derive(Serialize)]
+struct ReportMeta {
+    schema_version: &'static str,
+    tool_version: &'static str,
+    command: &'static str,
+}
+
+#[derive(Serialize)]
+struct ExplainJson<'a> {
+    meta: ReportMeta,
+    query: &'a str,
+    report: &'a ExplanationReport,
+}
+
+#[derive(Serialize)]
+struct CompareQueryJson<'a> {
+    meta: ReportMeta,
+    query: &'a str,
+    report: &'a CompareReport,
+}
+
+#[derive(Serialize)]
+struct CompareRunsJson {
+    meta: ReportMeta,
+    #[serde(flatten)]
+    diff: SimDiff,
+}
+
 fn slice_is_empty<T>(slice: &[T]) -> bool {
     slice.is_empty()
 }
@@ -367,13 +419,8 @@ fn severity_label(sev: &crate::model::Severity) -> &'static str {
     }
 }
 
-fn write_artifact<T: Serialize>(
-    artifacts: Option<&PathBuf>,
-    json_out: Option<&PathBuf>,
-    name: &str,
-    payload: &T,
-) -> Result<()> {
-    if let Some(path) = json_out {
+fn write_artifact<T: Serialize>(output: OutputOpts<'_>, name: &str, payload: &T) -> Result<()> {
+    if let Some(path) = output.json_out {
         let data = serde_json::to_vec_pretty(payload)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -381,7 +428,7 @@ fn write_artifact<T: Serialize>(
         fs::write(path, data)?;
         return Ok(());
     }
-    if let Some(dir) = artifacts {
+    if let Some(dir) = output.artifacts {
         let path = dir.join(name);
         let data = serde_json::to_vec_pretty(payload)?;
         fs::create_dir_all(dir)?;
@@ -409,16 +456,26 @@ fn sample_ids(ids: &[String]) -> Vec<String> {
     ids.iter().take(3).cloned().collect()
 }
 
+fn report_meta(command: &'static str) -> ReportMeta {
+    ReportMeta {
+        schema_version: "1",
+        tool_version: env!("CARGO_PKG_VERSION"),
+        command,
+    }
+}
+
 pub fn print_run_comparison(
     diff: &SimDiff,
     format: CompareFormat,
-    artifacts: Option<&PathBuf>,
-    json_out: Option<&PathBuf>,
-    json: bool,
+    output: OutputOpts<'_>,
 ) -> Result<()> {
-    write_artifact(artifacts, json_out, "compare_runs.json", diff)?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(diff)?);
+    let payload = CompareRunsJson {
+        meta: report_meta("compare-runs"),
+        diff: diff.clone(),
+    };
+    write_artifact(output, "compare_runs.json", &payload)?;
+    if output.json {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
     match format {
@@ -426,10 +483,17 @@ pub fn print_run_comparison(
             println!("Retrieval comparison");
             println!("====================");
             println!();
+            println!("Verdict: {}", diff.verdict);
             println!(
                 "Queries: before {} | after {}",
                 diff.queries_before, diff.queries_after
             );
+            if diff.query_count_mismatch {
+                println!(
+                    "WARNING: query count mismatch; comparisons may be misleading (before {} vs after {})",
+                    diff.queries_before, diff.queries_after
+                );
+            }
             println!(
                 "Avg top-1 similarity: before {:.3} | after {:.3}",
                 diff.avg_top1_similarity_before, diff.avg_top1_similarity_after
@@ -442,6 +506,19 @@ pub fn print_run_comparison(
                 "No matches: before {} | after {}",
                 diff.no_match_before, diff.no_match_after
             );
+            println!(
+                "Top-1 dominant: before {} ({:.0}%) | after {} ({:.0}%)",
+                diff.top1_dominant_doc_before.as_deref().unwrap_or("<none>"),
+                diff.top1_dominant_rate_before * 100.0,
+                diff.top1_dominant_doc_after.as_deref().unwrap_or("<none>"),
+                diff.top1_dominant_rate_after * 100.0
+            );
+            if !diff.improved_metrics.is_empty() {
+                println!("Improved metrics: {}", diff.improved_metrics.join(", "));
+            }
+            if !diff.regressed_metrics.is_empty() {
+                println!("Regressed metrics: {}", diff.regressed_metrics.join(", "));
+            }
             println!("\nTop-1 documents (counts):");
             for d in &diff.top1_docs {
                 println!(
@@ -451,6 +528,13 @@ pub fn print_run_comparison(
             }
         }
         CompareFormat::Table => {
+            println!("Verdict: {}", diff.verdict);
+            if diff.query_count_mismatch {
+                println!(
+                    "WARNING: query count mismatch (before {} vs after {})",
+                    diff.queries_before, diff.queries_after
+                );
+            }
             println!("Metric                     Before   After   Delta");
             println!("-------------------------------------------------");
             println!(
@@ -471,6 +555,12 @@ pub fn print_run_comparison(
                 diff.no_match_after,
                 diff.no_match_after as isize - diff.no_match_before as isize
             );
+            println!(
+                "Top-1 dominant rate        {:.3}   {:.3}   {:+.3}",
+                diff.top1_dominant_rate_before,
+                diff.top1_dominant_rate_after,
+                diff.top1_dominant_rate_after - diff.top1_dominant_rate_before
+            );
             println!("\nTop-1 document deltas:");
             for d in &diff.top1_docs {
                 println!(
@@ -481,40 +571,6 @@ pub fn print_run_comparison(
         }
     }
     Ok(())
-}
-
-fn expectation_counts(
-    retrievals: &[RetrievalResult],
-    queries: &[QuerySpec],
-    top_k: usize,
-) -> (usize, usize) {
-    let mut pass = 0;
-    let mut fail = 0;
-    for spec in queries {
-        if spec.expect_docs.is_empty() {
-            continue;
-        }
-        let result = retrievals.iter().find(|r| r.query_id == spec.id);
-        if let Some(r) = result {
-            let mut ok = false;
-            for doc in &spec.expect_docs {
-                if r.ranked.iter().any(|c| {
-                    crate::diagnostics::chunk_doc_id(&c.chunk_id) == *doc && c.rank <= top_k
-                }) {
-                    ok = true;
-                    break;
-                }
-            }
-            if ok {
-                pass += 1;
-            } else {
-                fail += 1;
-            }
-        } else {
-            fail += 1;
-        }
-    }
-    (pass, fail)
 }
 
 #[derive(Serialize, Clone)]

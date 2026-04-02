@@ -2,9 +2,19 @@
 name = "rag-audit"
 version = "0.1.0"
 edition = "2021"
+default-run = "raglens"
 license = "MIT"
-description = "RAG retrieval readiness diagnostics CLI"
-repository = "https://github.com/placeholder/rag-audit"
+description = "RAGLens CLI for debugging retrieval behavior in RAG systems"
+readme = "README.md"
+repository = "https://github.com/kraftaa/raglens"
+homepage = "https://github.com/kraftaa/raglens"
+documentation = "https://docs.rs/rag-audit"
+keywords = ["rag", "retrieval", "diagnostics", "cli", "audit"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "raglens"
+path = "src/bin/raglens.rs"
 
 [dependencies]
 anyhow = "1.0"
@@ -13,11 +23,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 walkdir = "2.5"
-rayon = "1.10"
-thiserror = "1.0"
-humantime = "2.1"
 indexmap = { version = "2.2", features = ["serde"] }
-indicatif = "0.17"
 regex = "1.10"
 toml = "0.8"
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "blocking"] }

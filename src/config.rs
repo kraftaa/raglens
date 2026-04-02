@@ -43,6 +43,10 @@ struct RawConfig {
     dominant_threshold: Option<f32>,
     required_metadata: Option<Vec<String>>,
     embedder: Option<EmbedderConfig>,
+    // Backward-compatible top-level embedding keys used in README/examples.
+    provider: Option<String>,
+    model: Option<String>,
+    base_url: Option<String>,
     cache_dir: Option<String>,
     low_sim_threshold: Option<f32>,
     no_match_threshold: Option<f32>,
@@ -60,7 +64,7 @@ impl Default for Config {
             max_tokens: 1200,
             min_tokens: 60,
             top_k: 5,
-            dominant_threshold: 0.2,
+            dominant_threshold: 0.3,
             required_metadata: vec!["product".into(), "region".into(), "version".into()],
             embedder: EmbedderConfig::Null,
             cache_dir: std::path::PathBuf::from(".rag-audit-cache"),
@@ -90,7 +94,25 @@ impl Config {
             .with_context(|| format!("reading config {}", path.display()))?;
         let raw: RawConfig = toml::from_str(&content).context("parsing rag-audit.toml")?;
 
-        Ok(Config {
+        let embedder = if let Some(e) = raw.embedder {
+            e
+        } else if let Some(provider) = raw.provider {
+            match provider.to_lowercase().as_str() {
+                "null" => EmbedderConfig::Null,
+                "openai" => EmbedderConfig::OpenAI {
+                    model: raw
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "text-embedding-3-small".to_string()),
+                    base_url: raw.base_url.clone().unwrap_or_else(default_openai_base),
+                },
+                other => anyhow::bail!("unknown provider in config: {}", other),
+            }
+        } else {
+            default.embedder
+        };
+
+        let cfg = Config {
             chunk_size: raw.chunk_size.unwrap_or(default.chunk_size),
             chunk_overlap: raw.chunk_overlap.unwrap_or(default.chunk_overlap),
             max_tokens: raw.max_tokens.unwrap_or(default.max_tokens),
@@ -98,7 +120,7 @@ impl Config {
             top_k: raw.top_k.unwrap_or(default.top_k),
             dominant_threshold: raw.dominant_threshold.unwrap_or(default.dominant_threshold),
             required_metadata: raw.required_metadata.unwrap_or(default.required_metadata),
-            embedder: raw.embedder.unwrap_or(default.embedder),
+            embedder,
             cache_dir: raw
                 .cache_dir
                 .map(std::path::PathBuf::from)
@@ -109,7 +131,9 @@ impl Config {
             retry_backoff_ms: raw.retry_backoff_ms.unwrap_or(default.retry_backoff_ms),
             request_timeout_ms: raw.request_timeout_ms.unwrap_or(default.request_timeout_ms),
             seed: raw.seed.unwrap_or(default.seed),
-        })
+        };
+        cfg.validate()?;
+        Ok(cfg)
     }
 
     pub fn override_embedder(&mut self, value: Option<&str>) -> Result<()> {
@@ -146,6 +170,55 @@ impl Config {
         }
     }
 
+    pub fn validate(&self) -> Result<()> {
+        if self.chunk_size == 0 {
+            anyhow::bail!("chunk_size must be > 0");
+        }
+        if self.top_k == 0 {
+            anyhow::bail!("top_k must be > 0");
+        }
+        if self.chunk_overlap >= self.chunk_size {
+            anyhow::bail!(
+                "chunk_overlap ({}) must be < chunk_size ({})",
+                self.chunk_overlap,
+                self.chunk_size
+            );
+        }
+        if self.max_tokens < self.min_tokens {
+            anyhow::bail!(
+                "max_tokens ({}) must be >= min_tokens ({})",
+                self.max_tokens,
+                self.min_tokens
+            );
+        }
+        if !(-1.0..=1.0).contains(&self.low_sim_threshold) {
+            anyhow::bail!(
+                "low_sim_threshold must be in [-1, 1], got {}",
+                self.low_sim_threshold
+            );
+        }
+        if !(-1.0..=1.0).contains(&self.no_match_threshold) {
+            anyhow::bail!(
+                "no_match_threshold must be in [-1, 1], got {}",
+                self.no_match_threshold
+            );
+        }
+        if self.no_match_threshold > self.low_sim_threshold {
+            anyhow::bail!(
+                "no_match_threshold ({}) must be <= low_sim_threshold ({})",
+                self.no_match_threshold,
+                self.low_sim_threshold
+            );
+        }
+        if !(0.0..=1.0).contains(&self.dominant_threshold) {
+            anyhow::bail!(
+                "dominant_threshold must be in [0, 1], got {}",
+                self.dominant_threshold
+            );
+        }
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub fn seed(&self) -> u64 {
         self.seed
@@ -154,4 +227,88 @@ impl Config {
 
 fn default_openai_base() -> String {
     "https://api.openai.com/v1".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn invalid_threshold_order_fails_validation() {
+        let cfg = Config {
+            low_sim_threshold: 0.2,
+            no_match_threshold: 0.4,
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn invalid_dominant_threshold_fails_validation() {
+        let cfg = Config {
+            dominant_threshold: 1.2,
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn invalid_chunking_parameters_fail_validation() {
+        let bad_chunk_size = Config {
+            chunk_size: 0,
+            ..Config::default()
+        };
+        assert!(bad_chunk_size.validate().is_err());
+
+        let bad_overlap = Config {
+            chunk_size: 100,
+            chunk_overlap: 100,
+            ..Config::default()
+        };
+        assert!(bad_overlap.validate().is_err());
+
+        let bad_token_limits = Config {
+            min_tokens: 200,
+            max_tokens: 100,
+            ..Config::default()
+        };
+        assert!(bad_token_limits.validate().is_err());
+
+        let bad_top_k = Config {
+            top_k: 0,
+            ..Config::default()
+        };
+        assert!(bad_top_k.validate().is_err());
+    }
+
+    #[test]
+    fn supports_top_level_provider_style_config() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("rag_audit_cfg_{stamp}.toml"));
+        fs::write(
+            &path,
+            r#"
+provider = "openai"
+model = "text-embedding-3-small"
+base_url = "https://api.openai.com/v1"
+"#,
+        )
+        .unwrap();
+
+        let cfg = Config::load(Some(&path)).expect("config should parse");
+        match cfg.embedder {
+            super::EmbedderConfig::OpenAI { model, base_url } => {
+                assert_eq!(model, "text-embedding-3-small");
+                assert_eq!(base_url, "https://api.openai.com/v1");
+            }
+            _ => panic!("expected openai embedder"),
+        }
+
+        let _ = fs::remove_file(path);
+    }
 }

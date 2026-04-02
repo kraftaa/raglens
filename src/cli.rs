@@ -3,7 +3,12 @@ use std::path::PathBuf;
 
 /// RAG retrieval diagnostics CLI
 #[derive(Parser, Debug)]
-#[command(name = "rag-audit", version, about = "RAG retrieval readiness diagnostics", long_about = None)]
+#[command(
+    name = "raglens",
+    version,
+    about = "RAGLens: debug retrieval before you blame the model",
+    long_about = None
+)]
 pub struct Cli {
     /// Optional config file (defaults to rag-audit.toml in CWD)
     #[arg(long, global = true)]
@@ -85,14 +90,14 @@ pub enum Commands {
         query: String,
     },
     /// Compare near-match docs/chunks for a query
-    #[command(name = "compare-query", alias = "compare")]
+    #[command(name = "compare-query")]
     CompareQuery {
         path: PathBuf,
         #[arg(long)]
         query: String,
     },
     /// Compare two simulation JSON reports (before/after)
-    #[command(name = "compare-runs", alias = "compare-sim")]
+    #[command(name = "compare-runs", alias = "compare", alias = "compare-sim")]
     CompareRuns {
         /// Baseline simulation JSON
         baseline: PathBuf,
@@ -101,7 +106,41 @@ pub enum Commands {
         /// Output format: summary or table
         #[arg(long, value_enum, default_value_t = CompareFormat::Summary)]
         format: CompareFormat,
+        /// Exit non-zero if weak match count increases
+        #[arg(long, default_value_t = false)]
+        fail_if_weak_increases: bool,
+        /// Exit non-zero if no-match count increases
+        #[arg(long, default_value_t = false)]
+        fail_if_no_match_increases: bool,
+        /// Exit non-zero if average top-1 similarity decreases
+        #[arg(long, default_value_t = false)]
+        fail_if_similarity_drops: bool,
+        /// Exit non-zero if overall compare verdict is REGRESSED
+        #[arg(long, default_value_t = false)]
+        fail_if_regressed: bool,
+        /// Exit non-zero if after-run top-1 dominant doc rate exceeds threshold (0-1)
+        #[arg(long)]
+        fail_if_top1_dominant_rate_exceeds: Option<f32>,
+        /// Exit non-zero if after-run top-1 dominant doc rate increases vs baseline
+        #[arg(long, default_value_t = false)]
+        fail_if_top1_dominant_rate_increases: bool,
+        /// Exit non-zero if baseline/improved query counts differ
+        #[arg(long, default_value_t = false)]
+        fail_if_query_count_mismatch: bool,
         /// Output JSON diff instead of human table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run built-in smoke checks on a corpus and query set
+    #[command(name = "self-test")]
+    SelfTest {
+        /// Path to documents directory
+        #[arg(long, default_value = "examples/docs")]
+        docs: PathBuf,
+        /// Path to structured query file
+        #[arg(long, default_value = "examples/queries_structured.txt")]
+        queries: PathBuf,
+        /// Output JSON report
         #[arg(long)]
         json: bool,
     },

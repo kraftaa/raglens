@@ -42,9 +42,19 @@ struct JsonReport {
     sim_summary: Option<SimSummary>,
     #[serde(default)]
     retrievals: Vec<RetrievalResult>,
+    #[serde(default)]
+    config: Option<ReportConfig>,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Deserialize, Clone, Copy)]
+struct ReportConfig {
+    #[serde(default = "default_low_sim_threshold")]
+    low_sim_threshold: f32,
+    #[serde(default = "default_no_match_threshold")]
+    no_match_threshold: f32,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DiffDocFreq {
     pub doc_id: String,
     pub before: usize,
@@ -52,17 +62,25 @@ pub struct DiffDocFreq {
     pub delta: isize,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SimDiff {
     pub queries_before: usize,
     pub queries_after: usize,
+    pub query_count_mismatch: bool,
     pub avg_top1_similarity_before: f32,
     pub avg_top1_similarity_after: f32,
     pub weak_before: usize,
     pub weak_after: usize,
     pub no_match_before: usize,
     pub no_match_after: usize,
+    pub top1_dominant_doc_before: Option<String>,
+    pub top1_dominant_rate_before: f32,
+    pub top1_dominant_doc_after: Option<String>,
+    pub top1_dominant_rate_after: f32,
     pub top1_docs: Vec<DiffDocFreq>,
+    pub verdict: String,
+    pub improved_metrics: Vec<String>,
+    pub regressed_metrics: Vec<String>,
 }
 
 pub fn compare_runs(baseline: &Path, improved: &Path) -> Result<SimDiff> {
@@ -73,17 +91,44 @@ pub fn compare_runs(baseline: &Path, improved: &Path) -> Result<SimDiff> {
     let after_sum = summarize(&after);
 
     let top1_docs = merge_top1(&before_sum.top1_freq, &after_sum.top1_freq);
+    let (top1_dominant_doc_before, top1_dominant_rate_before) =
+        dominant_top1(&before_sum.top1_freq, before_sum.queries);
+    let (top1_dominant_doc_after, top1_dominant_rate_after) =
+        dominant_top1(&after_sum.top1_freq, after_sum.queries);
+
+    let (verdict, improved_metrics, regressed_metrics) = classify(
+        QualitySignals {
+            avg_top1_similarity: before_sum.avg_top1_similarity,
+            weak_matches: before_sum.low_similarity_queries,
+            no_matches: before_sum.no_match_queries,
+            top1_dominant_rate: top1_dominant_rate_before,
+        },
+        QualitySignals {
+            avg_top1_similarity: after_sum.avg_top1_similarity,
+            weak_matches: after_sum.low_similarity_queries,
+            no_matches: after_sum.no_match_queries,
+            top1_dominant_rate: top1_dominant_rate_after,
+        },
+    );
 
     Ok(SimDiff {
         queries_before: before_sum.queries,
         queries_after: after_sum.queries,
+        query_count_mismatch: before_sum.queries != after_sum.queries,
         avg_top1_similarity_before: before_sum.avg_top1_similarity,
         avg_top1_similarity_after: after_sum.avg_top1_similarity,
         weak_before: before_sum.low_similarity_queries,
         weak_after: after_sum.low_similarity_queries,
         no_match_before: before_sum.no_match_queries,
         no_match_after: after_sum.no_match_queries,
+        top1_dominant_doc_before,
+        top1_dominant_rate_before,
+        top1_dominant_doc_after,
+        top1_dominant_rate_after,
         top1_docs,
+        verdict,
+        improved_metrics,
+        regressed_metrics,
     })
 }
 
@@ -115,11 +160,24 @@ fn summarize(rep: &JsonReport) -> SimpleSum {
     }
     // Fallback: derive from retrievals if sim_summary missing
     let queries = rep.retrievals.len();
+    let cfg = rep.config.unwrap_or(ReportConfig {
+        low_sim_threshold: default_low_sim_threshold(),
+        no_match_threshold: default_no_match_threshold(),
+    });
     let mut sum_sim = 0f32;
+    let mut low_similarity_queries = 0usize;
+    let mut no_match_queries = 0usize;
     let mut top1_freq: HashMap<String, usize> = HashMap::new();
     for r in &rep.retrievals {
+        let top_score = r.ranked.first().map(|top| top.score).unwrap_or(0.0);
+        sum_sim += top_score;
+        if top_score < cfg.low_sim_threshold {
+            low_similarity_queries += 1;
+        }
+        if top_score < cfg.no_match_threshold {
+            no_match_queries += 1;
+        }
         if let Some(top) = r.ranked.first() {
-            sum_sim += top.score;
             let doc = top.chunk_id.split('#').next().unwrap_or(&top.chunk_id);
             *top1_freq.entry(doc.to_string()).or_insert(0) += 1;
         }
@@ -132,12 +190,14 @@ fn summarize(rep: &JsonReport) -> SimpleSum {
     let freqs = top1_freq
         .into_iter()
         .map(|(doc_id, count)| DocFreq { doc_id, count })
-        .collect();
+        .collect::<Vec<_>>();
+    let mut freqs = freqs;
+    freqs.sort_by(|a, b| a.doc_id.cmp(&b.doc_id));
     SimpleSum {
         queries,
         avg_top1_similarity: avg,
-        low_similarity_queries: 0,
-        no_match_queries: 0,
+        low_similarity_queries,
+        no_match_queries,
         top1_freq: freqs,
     }
 }
@@ -167,4 +227,171 @@ fn merge_top1(before: &[DocFreq], after: &[DocFreq]) -> Vec<DiffDocFreq> {
     }
     diffs.sort_by(|x, y| y.after.cmp(&x.after)); // sort by after freq
     diffs
+}
+
+fn dominant_top1(freqs: &[DocFreq], queries: usize) -> (Option<String>, f32) {
+    if queries == 0 {
+        return (None, 0.0);
+    }
+    let mut best_doc: Option<String> = None;
+    let mut best_count = 0usize;
+    for d in freqs {
+        let take = if d.count > best_count {
+            true
+        } else if d.count == best_count {
+            match &best_doc {
+                Some(cur) => d.doc_id < *cur,
+                None => true,
+            }
+        } else {
+            false
+        };
+        if take {
+            best_count = d.count;
+            best_doc = Some(d.doc_id.clone());
+        }
+    }
+    (best_doc, best_count as f32 / queries as f32)
+}
+
+#[derive(Clone, Copy)]
+struct QualitySignals {
+    avg_top1_similarity: f32,
+    weak_matches: usize,
+    no_matches: usize,
+    top1_dominant_rate: f32,
+}
+
+fn classify(before: QualitySignals, after: QualitySignals) -> (String, Vec<String>, Vec<String>) {
+    let mut improved = Vec::new();
+    let mut regressed = Vec::new();
+    let eps = 1e-6f32;
+
+    if after.avg_top1_similarity > before.avg_top1_similarity + eps {
+        improved.push("avg_top1_similarity".to_string());
+    } else if after.avg_top1_similarity + eps < before.avg_top1_similarity {
+        regressed.push("avg_top1_similarity".to_string());
+    }
+    if after.weak_matches < before.weak_matches {
+        improved.push("weak_matches".to_string());
+    } else if after.weak_matches > before.weak_matches {
+        regressed.push("weak_matches".to_string());
+    }
+    if after.no_matches < before.no_matches {
+        improved.push("no_matches".to_string());
+    } else if after.no_matches > before.no_matches {
+        regressed.push("no_matches".to_string());
+    }
+    if after.top1_dominant_rate + eps < before.top1_dominant_rate {
+        improved.push("top1_dominant_rate".to_string());
+    } else if after.top1_dominant_rate > before.top1_dominant_rate + eps {
+        regressed.push("top1_dominant_rate".to_string());
+    }
+
+    let verdict = if improved.len() > regressed.len() {
+        "IMPROVED"
+    } else if regressed.len() > improved.len() {
+        "REGRESSED"
+    } else {
+        "NEUTRAL"
+    };
+
+    (verdict.to_string(), improved, regressed)
+}
+
+fn default_low_sim_threshold() -> f32 {
+    0.35
+}
+
+fn default_no_match_threshold() -> f32 {
+    0.25
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify, dominant_top1, QualitySignals};
+    use super::{summarize, JsonReport, RankedChunk, ReportConfig, RetrievalResult};
+
+    #[test]
+    fn classify_improved_case() {
+        let (verdict, improved, regressed) = classify(
+            QualitySignals {
+                avg_top1_similarity: 0.50,
+                weak_matches: 10,
+                no_matches: 5,
+                top1_dominant_rate: 0.60,
+            },
+            QualitySignals {
+                avg_top1_similarity: 0.70,
+                weak_matches: 3,
+                no_matches: 1,
+                top1_dominant_rate: 0.30,
+            },
+        );
+        assert_eq!(verdict, "IMPROVED");
+        assert!(!improved.is_empty());
+        assert!(regressed.is_empty());
+    }
+
+    #[test]
+    fn classify_regressed_case() {
+        let (verdict, improved, regressed) = classify(
+            QualitySignals {
+                avg_top1_similarity: 0.70,
+                weak_matches: 2,
+                no_matches: 1,
+                top1_dominant_rate: 0.30,
+            },
+            QualitySignals {
+                avg_top1_similarity: 0.60,
+                weak_matches: 8,
+                no_matches: 4,
+                top1_dominant_rate: 0.80,
+            },
+        );
+        assert_eq!(verdict, "REGRESSED");
+        assert!(improved.is_empty());
+        assert!(!regressed.is_empty());
+    }
+
+    #[test]
+    fn summarize_fallback_computes_low_and_no_match() {
+        let rep = JsonReport {
+            sim_summary: None,
+            retrievals: vec![
+                RetrievalResult {
+                    ranked: vec![RankedChunk {
+                        chunk_id: "a.md#0".into(),
+                        score: 0.5,
+                    }],
+                },
+                RetrievalResult { ranked: vec![] },
+            ],
+            config: Some(ReportConfig {
+                low_sim_threshold: 0.4,
+                no_match_threshold: 0.3,
+            }),
+        };
+        let s = summarize(&rep);
+        assert_eq!(s.queries, 2);
+        assert_eq!(s.low_similarity_queries, 1);
+        assert_eq!(s.no_match_queries, 1);
+    }
+
+    #[test]
+    fn dominant_top1_tie_breaks_by_doc_id() {
+        let freqs = vec![
+            super::DocFreq {
+                doc_id: "z.md".into(),
+                count: 3,
+            },
+            super::DocFreq {
+                doc_id: "a.md".into(),
+                count: 3,
+            },
+        ];
+        let (doc, rate) = dominant_top1(&freqs, 10);
+        assert_eq!(doc.as_deref(), Some("a.md"));
+        assert!((rate - 0.3).abs() < 1e-6);
+    }
 }

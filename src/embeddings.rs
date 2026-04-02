@@ -2,12 +2,11 @@ use crate::config::{Config, EmbedderConfig};
 use crate::model::{ChunkEmbedding, Corpus};
 use anyhow::{anyhow, Context, Result};
 use reqwest::blocking::Client;
+use reqwest::StatusCode;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 pub trait Embedder: Sync + Send {
@@ -37,9 +36,10 @@ impl NullEmbedder {
     }
 
     fn hash_token(&self, token: &str) -> u64 {
-        let mut h = DefaultHasher::new();
-        token.hash(&mut h);
-        h.finish()
+        let mut hasher = Sha256::new();
+        hasher.update(token.as_bytes());
+        let digest = hasher.finalize();
+        u64::from_le_bytes(digest[..8].try_into().unwrap_or([0u8; 8]))
     }
 }
 
@@ -73,6 +73,7 @@ pub fn embed_corpus(corpus: &Corpus, embedder: &dyn Embedder) -> Result<Vec<Chun
 pub struct EmbeddingCache {
     path: PathBuf,
     map: HashMap<String, Vec<f32>>,
+    dirty: bool,
 }
 
 impl EmbeddingCache {
@@ -82,12 +83,17 @@ impl EmbeddingCache {
             return Ok(Self {
                 path,
                 map: HashMap::new(),
+                dirty: false,
             });
         }
         let data = fs::read(&path).context("reading embedding cache")?;
         let map: HashMap<String, Vec<f32>> =
             serde_json::from_slice(&data).context("parsing embedding cache json")?;
-        Ok(Self { path, map })
+        Ok(Self {
+            path,
+            map,
+            dirty: false,
+        })
     }
 
     pub fn get(&self, key: &str) -> Option<&Vec<f32>> {
@@ -96,14 +102,22 @@ impl EmbeddingCache {
 
     pub fn insert(&mut self, key: String, vector: Vec<f32>) {
         self.map.insert(key, vector);
+        self.dirty = true;
     }
 
-    pub fn persist(&self) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).ok();
+    pub fn persist(&mut self) -> Result<()> {
+        if !self.dirty {
+            return Ok(());
         }
-        let data = serde_json::to_vec_pretty(&self.map)?;
-        fs::write(&self.path, data).context("writing embedding cache")
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let data = serde_json::to_vec(&self.map)?;
+        let tmp_path = self.path.with_extension("tmp");
+        fs::write(&tmp_path, data).context("writing embedding cache temp file")?;
+        fs::rename(&tmp_path, &self.path).context("renaming embedding cache temp file")?;
+        self.dirty = false;
+        Ok(())
     }
 }
 
@@ -114,6 +128,8 @@ pub struct OpenAIEmbedder {
     base_url: String,
     dim_hint: usize,
     batch_size: usize,
+    max_retries: usize,
+    retry_backoff_ms: u64,
 }
 
 #[derive(Deserialize)]
@@ -127,7 +143,14 @@ struct EmbeddingItem {
 }
 
 impl OpenAIEmbedder {
-    pub fn new(api_key: String, model: String, base_url: String, timeout_ms: u64) -> Result<Self> {
+    pub fn new(
+        api_key: String,
+        model: String,
+        base_url: String,
+        timeout_ms: u64,
+        max_retries: usize,
+        retry_backoff_ms: u64,
+    ) -> Result<Self> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_millis(timeout_ms))
             .build()?;
@@ -139,6 +162,8 @@ impl OpenAIEmbedder {
             base_url,
             dim_hint: 1536,
             batch_size: 64,
+            max_retries,
+            retry_backoff_ms,
         })
     }
 
@@ -168,8 +193,8 @@ impl Embedder for OpenAIEmbedder {
                 "model": self.model,
                 "input": chunk_group,
             });
-            let mut last_err = None;
-            for attempt in 0..=2 {
+            let mut last_err: Option<anyhow::Error> = None;
+            for attempt in 0..=self.max_retries {
                 let resp = self
                     .client
                     .post(&url)
@@ -178,29 +203,51 @@ impl Embedder for OpenAIEmbedder {
                     .send();
                 match resp {
                     Ok(r) => {
-                        let r = r
-                            .error_for_status()
-                            .context("openai embedding error status")?;
-                        let parsed: EmbeddingResponse =
-                            r.json().context("parsing openai embedding response")?;
-                        if parsed.data.len() != chunk_group.len() {
-                            return Err(anyhow!(
-                                "openai embedding count mismatch: expected {}, got {}",
-                                chunk_group.len(),
-                                parsed.data.len()
-                            ));
+                        let status = r.status();
+                        if status.is_success() {
+                            let parsed: EmbeddingResponse =
+                                r.json().context("parsing openai embedding response")?;
+                            if parsed.data.len() != chunk_group.len() {
+                                return Err(anyhow!(
+                                    "openai embedding count mismatch: expected {}, got {}",
+                                    chunk_group.len(),
+                                    parsed.data.len()
+                                ));
+                            }
+                            for item in parsed.data {
+                                out.push(item.embedding);
+                            }
+                            last_err = None;
+                            break;
                         }
-                        for item in parsed.data {
-                            out.push(item.embedding);
+                        let body = r.text().unwrap_or_default();
+                        let msg = format!(
+                            "openai embedding error status {}{}",
+                            status.as_u16(),
+                            if body.is_empty() {
+                                String::new()
+                            } else {
+                                format!(": {}", body.chars().take(200).collect::<String>())
+                            }
+                        );
+                        if should_retry_status(status) {
+                            last_err = Some(anyhow!(msg));
+                            if attempt < self.max_retries {
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    self.retry_backoff_ms * (attempt + 1) as u64,
+                                ));
+                            }
+                            continue;
                         }
-                        last_err = None;
-                        break;
+                        return Err(anyhow!(msg));
                     }
                     Err(e) => {
-                        last_err = Some(e);
-                        std::thread::sleep(std::time::Duration::from_millis(
-                            300 * (attempt + 1) as u64,
-                        ));
+                        last_err = Some(e.into());
+                        if attempt < self.max_retries {
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                self.retry_backoff_ms * (attempt + 1) as u64,
+                            ));
+                        }
                     }
                 }
             }
@@ -230,6 +277,8 @@ pub fn build_embedder(config: &Config) -> Result<Box<dyn Embedder>> {
                 model.clone(),
                 base_url.clone(),
                 config.request_timeout_ms,
+                config.max_retries,
+                config.retry_backoff_ms,
             )?))
         }
     }
@@ -246,4 +295,21 @@ pub fn hash_text_key(text: &str, dim: usize, model: &str) -> String {
 fn rough_tokens(text: &str) -> usize {
     // heuristic: 1 token per 0.75 words
     ((text.split_whitespace().count() as f32) * 1.33).ceil() as usize
+}
+
+fn should_retry_status(status: StatusCode) -> bool {
+    status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_retry_status;
+    use reqwest::StatusCode;
+
+    #[test]
+    fn retryable_statuses_are_limited_to_transient_errors() {
+        assert!(should_retry_status(StatusCode::TOO_MANY_REQUESTS));
+        assert!(should_retry_status(StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(!should_retry_status(StatusCode::BAD_REQUEST));
+    }
 }
