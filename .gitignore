@@ -1,3 +1,7 @@
 TECHNICAL_SPEC.md
 other
 target
+.rag-audit-cache/
+artifacts/*.json
+baseline.json
+improved.json

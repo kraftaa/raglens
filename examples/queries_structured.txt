@@ -1,0 +1,6 @@
+refund_window	refund after 90 days	refund_policy.md,refund_old.md
+late_shipping	late shipment refund	shipping.md,faq.md
+shipping_eta	how long does shipping take	shipping.md,faq.md
+returns_damaged	return damaged item	returns.md,faq.md
+billing_dispute	billing dispute window	billing.md,faq.md
+support_contact	how to contact support	support.md,faq.md

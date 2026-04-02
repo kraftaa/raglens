@@ -1,18 +1,49 @@
-# rag-audit
+# RAGLens
 
-“A CLI to debug retrieval behavior in RAG systems.”
+RAGLens is a CLI for debugging retrieval in RAG systems — before you blame the model.
 Scope: retrieval diagnostics only (no answer grading, hallucination detection, prompt eval, or framework integrations).
 
-It analyzes your corpus before you build a full pipeline, answering:
+Command name: `raglens` (`rag-audit` is kept as a compatibility alias).
+
+It answers:
 
 - Are my chunks too large or too small?
 - Do some documents dominate retrieval?
 - Why did the retriever pick a specific document?
 - Which queries are poorly covered?
+- What likely causes a dominant document (oversized chunks, duplicate content, missing metadata)?
 
-Scope guard: retrieval diagnostics only. No answer grading, hallucination detection, prompt eval, or framework integrations in v1.
+## 5-second demo
+```bash
+raglens --config examples/rag-audit.toml explain examples/docs --query "refund after 90 days"
+```
+Output (abridged):
+```text
+Top result: refund_policy.md#5 (doc: refund_policy.md)
+score: 0.622
+why: semantic 0.472 + keyword boost 0.150
+```
+
+## Before / After
+Before:
+- Wrong retrieval result
+- Scroll logs and guess chunking problems
+- Tweak settings blindly
+
+After:
+- `raglens explain ...`
+- `raglens readiness ...`
+- Concrete ranking evidence + dominant-document and chunking signals
+
+## What this is NOT
+- Not prompt evaluation
+- Not hallucination detection
+- Not LLM tracing
+- Not a full RAG framework
 
 ## Quick demo
+Examples below use `cargo run -- ...` so they work before install.
+
 Example corpus:
 ```
 docs/
@@ -25,7 +56,7 @@ docs/
   support.md
   pricing.md
 ```
-Example queries (`queries.txt`, one per line):
+Example plain queries (`examples/queries.txt`, one per line):
 ```
 refund after 90 days
 late shipment refund
@@ -35,35 +66,56 @@ billing dispute window
 lost package claim
 express shipping speed
 ```
+Structured queries with expected docs for simulation/readiness live in `examples/queries_structured.txt`.
 Run:
 ```bash
-rag-audit readiness docs --queries queries.txt
+cargo run -- --config examples/rag-audit.toml readiness examples/docs --queries examples/queries_structured.txt
+cargo run -- --config examples/rag-audit.toml simulate examples/docs --queries examples/queries_structured.txt
+cargo run -- --config examples/rag-audit.toml explain examples/docs --query "refund after 90 days"
 ```
-Sample (abridged):
+Sample (current output, abridged):
 ```
-RAG readiness: NEEDS WORK
-Documents: 4
-Chunks: 82
-Chunk size avg 910 | max 1820
-Issues
-- large chunks (>800): 31
-- duplicate chunks: 6
-Retrieval simulation
-Queries tested: 50
-Dominant documents
-- faq.md: top-1 in 41% of queries
-Coverage
-- weak matches: 6
-- no matches: 2
+RAG Retrieval Readiness Report
+==============================
+Documents: 8
+Chunks: 11
+Chunk config: size 80 overlap 20 | top_k 5 | thresholds low 0.35 no-match 0.25 | embedder Null
+Chunk size avg 55.4 | min 23 | max 80 | p50 54 | p95 80
+- LOW: 1 chunks below min_tokens 30
+- HIGH: refund_policy.md appears as top-1 in 50% of queries (top-k 83%)
+- FAIL: Query late_shipping expected ["shipping.md", "faq.md"], not found in top 5
+- MEDIUM: refund_policy.md dominance likely driven by: broad lexical coverage across many queries
+```
+
+## Quick Start (30 seconds)
+```bash
+# Install locally
+cargo install --path .
+
+# Verify install
+raglens --version
+raglens --help
+raglens self-test --json
+
+# Run readiness audit
+raglens --config ./examples/rag-audit.toml readiness ./examples/docs --queries ./examples/queries_structured.txt
+
+# Debug one query
+raglens --config ./examples/rag-audit.toml explain ./examples/docs --query "refund after 90 days"
 ```
 
 ## Install
+Local install from this repo (recommended while in development):
 ```bash
-cargo install rag-audit
+cargo install --path .
 ```
-or build locally:
+This installs two executable names:
+- `raglens` (primary CLI name)
+- `rag-audit` (compatibility alias)
+
+If you do not want to install yet, run directly:
 ```bash
-cargo build --release
+cargo run -- --config examples/rag-audit.toml readiness examples/docs --queries examples/queries_structured.txt
 ```
 
 ## Core commands (v1)
@@ -72,9 +124,18 @@ cargo build --release
 - `simulate <docs> --queries queries.txt [--json-out file]`: run queries, report dominant docs, low/no-match counts, similarity stats.
 - `explain <docs> --query "..." [--json-out file]`: EXPLAIN-style breakdown of why top docs ranked.
 - `coverage <docs> [--queries queries.txt] [--json-out file]`: with queries → Good/Weak/None coverage; without queries → topic imbalance.
-- `compare-runs baseline.json improved.json [--format summary|table] [--json-out file]`: compare before/after simulation artifacts.
+- `compare-runs baseline.json improved.json` (alias: `compare`) `[--format summary|table] [--fail-if-weak-increases] [--fail-if-no-match-increases] [--fail-if-similarity-drops] [--fail-if-regressed] [--fail-if-top1-dominant-rate-exceeds 0.60] [--fail-if-top1-dominant-rate-increases] [--fail-if-query-count-mismatch] [--json-out file]`: compare before/after simulation artifacts with IMPROVED/REGRESSED/NEUTRAL verdict and optional CI gating.
+- `self-test [--docs examples/docs] [--queries examples/queries_structured.txt] [--json]`: built-in smoke check for install/CI sanity.
 
 Add `--artifacts-dir artifacts/` to save standard JSON files per command (e.g., `artifacts/readiness.json`, `simulation.json`, `chunks.json`, `explain.json`, `compare_runs.json`).
+
+Note: global `--fail-on-*` flags apply only to `readiness` and `simulate`.
+
+## Exit codes
+- `0`: success
+- `1`: runtime/usage/config error
+- `2`: readiness/simulate fail gate triggered
+- `3`: compare-runs regression gate triggered
 
 ## How it works (deterministic pipeline)
 1) Load & chunk docs  
@@ -83,33 +144,35 @@ Add `--artifacts-dir artifacts/` to save standard JSON files per command (e.g., 
 4) Analyze chunk stats & retrieval behavior (dominance, low/no-match, EXPLAIN)  
 5) Output human report + JSON artifacts (`--json-out` or `--artifacts-dir`)
 
-### Sample output (readiness on the demo)
+### Sample output (readiness on `examples/docs`)
 ```
 RAG Retrieval Readiness Report
 ==============================
 
-Documents: 7
-Chunks: 7
+Documents: 8
+Chunks: 11
 
-Chunk config: size 200 overlap 30
-Chunk size avg 88.4 | min 52 | max 132 | p50 90 | p95 132
-- LOW: 0 chunks below min_tokens 40
-- LOW: duplicate chunks detected: 1
-- HIGH: faq.md retrieved in 57% (dominant)
-- HIGH: refund_old.md retrieved in 43%
-- Coverage: weak matches 2, no matches 1
+Chunk config: size 80 overlap 20 | top_k 5 | thresholds low 0.35 no-match 0.25 | embedder Null
+Chunk size avg 55.4 | min 23 | max 80 | p50 54 | p95 80
+- LOW: 1 chunks below min_tokens 30
+- HIGH: refund_policy.md appears as top-1 in 50% of queries (top-k 83%)
+- FAIL: Query late_shipping expected ["shipping.md", "faq.md"], not found in top 5
+- MEDIUM: refund_policy.md dominance likely driven by: broad lexical coverage across many queries
 ```
 
 ## Inputs
-Documents (v1): `.md`, `.txt`, `.json`. (PDF optional later.)
+Documents (v1): `.md`, `.txt`, `.html`, `.json`. (PDF optional later.)
 
 Queries: 
 - YAML with `queries:` list (supports `expect_docs`), or
 - Plain text, one query per line.
+- Optional tab-separated text lines: `id<TAB>query<TAB>expect_doc1,expect_doc2`.
+  - Example: `examples/queries_structured.txt`
 
 ## Defaults (deterministic)
-- Chunk size 400 tokens, overlap 50.
+- Chunk size 400 tokens, overlap 40.
 - Retrieval: cosine, top_k=5.
+- Dominant document threshold: 0.30 (top-1 share).
 - Embedding: single configured backend (Null bag-of-words by default; OpenAI available via config/env). Sequential processing for repeatability.
 
 ## When this is useful
@@ -120,13 +183,36 @@ Queries:
 
 ## CI gating example
 ```
-rag-audit simulate docs --queries queries.txt --json-out report.json
+raglens simulate docs --queries queries.txt --json-out report.json
 jq 'select(.sim_summary.low_similarity_queries==0 and .sim_summary.no_match_queries==0)' report.json >/dev/null \
   || { echo "Retrieval coverage failed"; exit 1; }
+
+raglens compare-runs baseline.json improved.json --fail-if-regressed --fail-if-no-match-increases
+```
+
+## Compare-runs example
+```bash
+raglens simulate examples/docs --queries examples/queries_structured.txt --json-out baseline.json
+# ...make corpus/chunking changes...
+raglens simulate examples/docs --queries examples/queries_structured.txt --json-out improved.json
+
+raglens compare-runs baseline.json improved.json --format table
+raglens compare-runs baseline.json improved.json \
+  --fail-if-regressed \
+  --fail-if-top1-dominant-rate-exceeds 0.60 \
+  --fail-if-top1-dominant-rate-increases
+```
+
+## Dominance root-cause hints
+When dominance is detected, readiness/simulate can emit cause hints:
+```text
+- MEDIUM: faq.md dominance likely driven by: oversized chunks, duplicate chunk content, missing metadata fields
 ```
 
 ## JSON artifacts (per command)
 `--json-out file` writes that command’s report; `--artifacts-dir dir` writes standard filenames:
+- Most artifacts include `meta` (`schema_version`, `tool_version`, `command`) for CI traceability.
+- Artifact shape: `{ "meta": {...}, ...command-specific fields... }`.
 - `readiness.json`: findings + chunk_stats
 - `chunks.json`: chunk stats + findings
 - `simulation.json`: dominant docs, top1/top3 freq, avg_top1_similarity, low/no-match counts, expectations
@@ -140,6 +226,8 @@ jq 'select(.sim_summary.low_similarity_queries==0 and .sim_summary.no_match_quer
 - No dashboards/UI
 
 ## Why use this
+- Before: “why did production retrieval fail on this query?” often requires manual log spelunking.
+- After: run `raglens explain ...` / `raglens simulate ...` to see concrete retrieval behavior and failure signals.
 - Early detection of chunking mistakes, duplication, dominance, and weak coverage.
 - Deterministic, numeric outputs engineers can trust.
 - CI-friendly JSON artifacts for gating changes.
@@ -148,14 +236,21 @@ jq 'select(.sim_summary.low_similarity_queries==0 and .sim_summary.no_match_quer
 `rag-audit.toml` (optional):
 ```
 chunk_size = 400
-chunk_overlap = 50
+chunk_overlap = 40
 top_k = 5
-dominant_threshold = 0.2
+dominant_threshold = 0.3
 provider = "null" # or "openai"
 model = "text-embedding-3-small"
 cache_dir = ".rag-audit-cache"
 ```
 CLI overrides: `--embedder null|openai`, `--cache-dir <dir>`, `--json-out <file>`, `--artifacts-dir <dir>`.
+See `rag-audit.toml.example` for a fuller template.
+
+## Roadmap
+- [ ] PDF loader (with deterministic extraction path)
+- [ ] Additional embedding providers
+- [ ] Hybrid retrieval diagnostics (BM25 + semantic)
+- [ ] Optional HTML report output
 
 ## Project status
 Early, but end-to-end runnable: load docs, chunk, embed, retrieve, diagnose, emit JSON. Focus remains on retrieval diagnostics; broader RAG features intentionally out of scope for v1.

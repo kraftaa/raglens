@@ -1,6 +1,6 @@
-chunk_size = 200
-chunk_overlap = 30
-min_tokens = 40
+chunk_size = 80
+chunk_overlap = 20
+min_tokens = 30
 max_tokens = 1200
 top_k = 5
 dominant_threshold = 0.3

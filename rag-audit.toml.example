@@ -4,7 +4,7 @@ chunk_overlap = 40
 max_tokens = 1200
 min_tokens = 60
 top_k = 5
-dominant_threshold = 0.2
+dominant_threshold = 0.3
 required_metadata = ["product", "region", "version"]
 
 # Embeddings
