@@ -1,7 +1,9 @@
 use crate::cli::CompareFormat;
 use crate::compare_runs::SimDiff;
 use crate::config::Config;
-use crate::model::{ChunkStats, ConfigSnapshot, Corpus, CoverageSummary, Finding, RetrievalResult};
+use crate::model::{
+    ChunkStats, ConfigSnapshot, Corpus, CoverageSummary, Finding, OptimizeSummary, RetrievalResult,
+};
 use crate::retrieval::{CompareReport, ExplanationReport, QuerySpec};
 use anyhow::Result;
 use serde::Serialize;
@@ -12,6 +14,7 @@ use std::path::PathBuf;
 pub struct OutputOpts<'a> {
     pub artifacts: Option<&'a PathBuf>,
     pub json_out: Option<&'a PathBuf>,
+    pub html_out: Option<&'a PathBuf>,
     pub json: bool,
 }
 
@@ -283,6 +286,8 @@ pub fn print_explanation(
         report,
     };
     write_artifact(output, "explain.json", &payload)?;
+    let html = render_explain_html(query, report);
+    write_html_artifact(output, "explain.html", &html)?;
     println!("Retrieval Explanation");
     println!("=====================");
     println!();
@@ -320,6 +325,8 @@ pub fn print_comparison(query: &str, report: &CompareReport, output: OutputOpts<
         report,
     };
     write_artifact(output, "compare.json", &payload)?;
+    let html = render_compare_html(query, report);
+    write_html_artifact(output, "compare.html", &html)?;
     println!("Retrieval Compare");
     println!("=================");
     println!();
@@ -435,6 +442,147 @@ fn write_artifact<T: Serialize>(output: OutputOpts<'_>, name: &str, payload: &T)
         fs::write(path, data)?;
     }
     Ok(())
+}
+
+fn write_html_artifact(output: OutputOpts<'_>, name: &str, html: &str) -> Result<()> {
+    if let Some(path) = output.html_out {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, html)?;
+        return Ok(());
+    }
+    if let Some(dir) = output.artifacts {
+        let path = dir.join(name);
+        fs::create_dir_all(dir)?;
+        fs::write(path, html)?;
+    }
+    Ok(())
+}
+
+fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn render_explain_html(query: &str, report: &ExplanationReport) -> String {
+    let mut rows = String::new();
+    for item in &report.ranked {
+        rows.push_str(&format!(
+            "<tr>\
+                <td>{}</td>\
+                <td><code>{}</code></td>\
+                <td><code>{}</code></td>\
+                <td>{:.3}</td>\
+                <td>{:.3}</td>\
+                <td>{} ({:.2})</td>\
+                <td>{}</td>\
+                <td>{}</td>\
+            </tr>",
+            item.rank,
+            html_escape(&item.chunk_id),
+            html_escape(&item.doc_id),
+            item.explanation.total_score,
+            item.explanation.similarity,
+            item.explanation.keyword_overlap,
+            item.explanation.keyword_overlap_norm,
+            if item.explanation.phrase_match {
+                "yes"
+            } else {
+                "no"
+            },
+            item.explanation.token_count
+        ));
+    }
+    format!(
+        "<!doctype html>\
+<html lang=\"en\">\
+<head>\
+  <meta charset=\"utf-8\"/>\
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\
+  <title>RAGLens Explain</title>\
+  <style>\
+    body {{ font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #111; }}\
+    h1 {{ margin: 0 0 8px; }}\
+    .query {{ margin: 0 0 18px; color: #444; }}\
+    table {{ border-collapse: collapse; width: 100%; font-size: 14px; }}\
+    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }}\
+    th {{ background: #f7f7f7; }}\
+    code {{ background: #f3f3f3; padding: 1px 4px; border-radius: 4px; }}\
+  </style>\
+</head>\
+<body>\
+  <h1>RAGLens Retrieval Explanation</h1>\
+  <p class=\"query\"><strong>Query:</strong> {}</p>\
+  <table>\
+    <thead>\
+      <tr>\
+        <th>Rank</th><th>Chunk</th><th>Document</th><th>Total score</th>\
+        <th>Semantic</th><th>Keyword overlap</th><th>Phrase match</th><th>Tokens</th>\
+      </tr>\
+    </thead>\
+    <tbody>{}</tbody>\
+  </table>\
+</body>\
+</html>",
+        html_escape(query),
+        rows
+    )
+}
+
+fn render_compare_html(query: &str, report: &CompareReport) -> String {
+    let mut rows = String::new();
+    for item in &report.ranked {
+        rows.push_str(&format!(
+            "<tr>\
+                <td>{}</td>\
+                <td><code>{}</code></td>\
+                <td><code>{}</code></td>\
+                <td>{:.3}</td>\
+                <td>{:.3}</td>\
+                <td>{}</td>\
+            </tr>",
+            item.rank,
+            html_escape(&item.chunk_id),
+            html_escape(&item.doc_id),
+            item.score,
+            item.explanation.similarity,
+            item.explanation.keyword_overlap
+        ));
+    }
+    format!(
+        "<!doctype html>\
+<html lang=\"en\">\
+<head>\
+  <meta charset=\"utf-8\"/>\
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\
+  <title>RAGLens Compare</title>\
+  <style>\
+    body {{ font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #111; }}\
+    table {{ border-collapse: collapse; width: 100%; font-size: 14px; }}\
+    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}\
+    th {{ background: #f7f7f7; }}\
+    code {{ background: #f3f3f3; padding: 1px 4px; border-radius: 4px; }}\
+  </style>\
+</head>\
+<body>\
+  <h1>RAGLens Retrieval Compare</h1>\
+  <p><strong>Query:</strong> {}</p>\
+  <table>\
+    <thead>\
+      <tr><th>Rank</th><th>Chunk</th><th>Document</th><th>Score</th><th>Semantic</th><th>Keyword overlap</th></tr>\
+    </thead>\
+    <tbody>{}</tbody>\
+  </table>\
+</body>\
+</html>",
+        html_escape(query),
+        rows
+    )
 }
 
 fn config_snapshot(cfg: &Config) -> ConfigSnapshot {
@@ -569,6 +717,71 @@ pub fn print_run_comparison(
                 );
             }
         }
+    }
+    Ok(())
+}
+
+pub fn print_optimize(summary: &OptimizeSummary, output: OutputOpts<'_>) -> Result<()> {
+    #[derive(Serialize)]
+    struct OptimizeJson<'a> {
+        meta: ReportMeta,
+        optimize: &'a OptimizeSummary,
+    }
+
+    let payload = OptimizeJson {
+        meta: report_meta("optimize"),
+        optimize: summary,
+    };
+    write_artifact(output, "optimize.json", &payload)?;
+    if output.json {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+
+    println!("Chunking Optimization");
+    println!("=====================");
+    println!();
+    println!("Queries file: {}", summary.queries_file);
+    println!(
+        "Candidates: considered {} | skipped {}",
+        summary.considered, summary.skipped
+    );
+    if let Some(best) = &summary.best {
+        println!(
+            "Best: chunk_size={} overlap={} score={:.2}",
+            best.chunk_size, best.chunk_overlap, best.score
+        );
+        println!(
+            "  avg_top1_similarity {:.3} | weak {} | no-match {} | expectation fails {} | dominant {:.0}%",
+            best.avg_top1_similarity,
+            best.low_similarity_queries,
+            best.no_match_queries,
+            best.expectation_failures,
+            best.dominant_rate * 100.0
+        );
+    } else {
+        println!("No valid candidates.");
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "Top {} candidates:",
+        summary.top_n.min(summary.candidates.len())
+    );
+    println!("size  overlap  score   sim    weak  none  exp_fail  dom%");
+    for c in summary.candidates.iter().take(summary.top_n) {
+        println!(
+            "{:<5} {:<7} {:<6.2} {:<6.3} {:<5} {:<5} {:<9} {:<5.0}",
+            c.chunk_size,
+            c.chunk_overlap,
+            c.score,
+            c.avg_top1_similarity,
+            c.low_similarity_queries,
+            c.no_match_queries,
+            c.expectation_failures,
+            c.dominant_rate * 100.0
+        );
     }
     Ok(())
 }

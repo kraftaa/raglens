@@ -14,6 +14,7 @@ use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands, CompareFormat};
 use config::Config;
+use model::{OptimizeCandidate, OptimizeSummary};
 use serde::Serialize;
 use std::fmt;
 use std::path::PathBuf;
@@ -34,6 +35,15 @@ struct CompareGateOpts {
     fail_if_top1_dominant_rate_exceeds: Option<f32>,
     fail_if_top1_dominant_rate_increases: bool,
     fail_if_query_count_mismatch: bool,
+}
+
+struct OptimizeOpts {
+    path: PathBuf,
+    queries: PathBuf,
+    chunk_sizes: Vec<usize>,
+    chunk_overlaps: Vec<usize>,
+    top_n: usize,
+    write_config: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -82,6 +92,7 @@ pub fn run() -> Result<()> {
     let output = report::OutputOpts {
         artifacts: cli.artifacts_dir.as_ref(),
         json_out: cli.json_out.as_ref(),
+        html_out: cli.html_out.as_ref(),
         json: false,
     };
     let fail_on = FailOnOpts {
@@ -137,6 +148,29 @@ pub fn run() -> Result<()> {
         Commands::CompareQuery { path, query } => {
             ensure_fail_flags_supported("compare-query", fail_on)?;
             run_compare(path, &config, output, query)?
+        }
+        Commands::Optimize {
+            path,
+            queries,
+            chunk_sizes,
+            chunk_overlaps,
+            top_n,
+            write_config,
+            json,
+        } => {
+            ensure_fail_flags_supported("optimize", fail_on)?;
+            run_optimize(
+                OptimizeOpts {
+                    path,
+                    queries,
+                    chunk_sizes,
+                    chunk_overlaps,
+                    top_n,
+                    write_config,
+                },
+                &config,
+                report::OutputOpts { json, ..output },
+            )?
         }
         Commands::CompareRuns {
             baseline,
@@ -369,6 +403,130 @@ fn run_compare(
         ranked: explanation.ranked.into_iter().take(5).collect(),
     };
     report::print_comparison(&query, &comparison, output)?;
+    Ok(())
+}
+
+fn run_optimize(opts: OptimizeOpts, config: &Config, output: report::OutputOpts<'_>) -> Result<()> {
+    let OptimizeOpts {
+        path,
+        queries,
+        mut chunk_sizes,
+        mut chunk_overlaps,
+        top_n,
+        write_config,
+    } = opts;
+
+    if chunk_sizes.is_empty() {
+        anyhow::bail!("optimize requires at least one chunk size");
+    }
+    if chunk_overlaps.is_empty() {
+        anyhow::bail!("optimize requires at least one chunk overlap");
+    }
+    if top_n == 0 {
+        anyhow::bail!("top_n must be > 0");
+    }
+
+    chunk_sizes.sort_unstable();
+    chunk_sizes.dedup();
+    chunk_overlaps.sort_unstable();
+    chunk_overlaps.dedup();
+
+    let embedder = embeddings::build_embedder(config)?;
+    let mut candidates = Vec::<OptimizeCandidate>::new();
+    let mut skipped = 0usize;
+
+    for size in chunk_sizes {
+        for overlap in &chunk_overlaps {
+            if *overlap >= size {
+                skipped += 1;
+                continue;
+            }
+            let mut cfg = config.clone();
+            cfg.chunk_size = size;
+            cfg.chunk_overlap = *overlap;
+            cfg.validate()?;
+
+            let corpus = prepare_corpus(path.clone(), &cfg)?;
+            let sim =
+                retrieval::simulate_retrieval(&corpus, embedder.as_ref(), Some(&queries), &cfg)?;
+            let summary = diagnostics::simulate_summary(
+                &sim.results,
+                cfg.low_sim_threshold,
+                cfg.no_match_threshold,
+            );
+            let expectation_fails = expectation_failures(&sim.results, &sim.queries, cfg.top_k);
+            let dominant_rate = diagnostics::max_dominant_rate(&sim.results, &cfg).unwrap_or(0.0);
+            let (chunk_stats, _) = diagnostics::chunk_stats(&corpus, &cfg);
+
+            let chunk_issue_ratio = if chunk_stats.chunks == 0 {
+                0.0
+            } else {
+                (chunk_stats.large_chunks + chunk_stats.small_chunks) as f32
+                    / chunk_stats.chunks as f32
+            };
+            let dominance_penalty = if dominant_rate > cfg.dominant_threshold {
+                (dominant_rate - cfg.dominant_threshold) * 40.0
+            } else {
+                0.0
+            };
+            let score = (summary.avg_top1_similarity * 100.0)
+                - (summary.low_similarity_queries as f32 * 2.0)
+                - (summary.no_match_queries as f32 * 4.0)
+                - (expectation_fails as f32 * 5.0)
+                - (chunk_issue_ratio * 10.0)
+                - dominance_penalty;
+
+            candidates.push(OptimizeCandidate {
+                chunk_size: size,
+                chunk_overlap: *overlap,
+                score,
+                avg_top1_similarity: summary.avg_top1_similarity,
+                low_similarity_queries: summary.low_similarity_queries,
+                no_match_queries: summary.no_match_queries,
+                expectation_failures: expectation_fails,
+                dominant_rate,
+                documents: corpus.documents.len(),
+                chunks: corpus.chunks.len(),
+                large_chunks: chunk_stats.large_chunks,
+                small_chunks: chunk_stats.small_chunks,
+            });
+        }
+    }
+
+    candidates.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| a.expectation_failures.cmp(&b.expectation_failures))
+            .then_with(|| a.no_match_queries.cmp(&b.no_match_queries))
+            .then_with(|| a.low_similarity_queries.cmp(&b.low_similarity_queries))
+            .then_with(|| a.chunk_size.cmp(&b.chunk_size))
+            .then_with(|| a.chunk_overlap.cmp(&b.chunk_overlap))
+    });
+
+    let best = candidates.first().cloned();
+    let summary = OptimizeSummary {
+        queries_file: queries.display().to_string(),
+        considered: candidates.len(),
+        skipped,
+        top_n,
+        candidates,
+        best: best.clone(),
+    };
+
+    if let Some(path) = write_config {
+        if let Some(best_cfg) = best {
+            let content = format!(
+                "# generated by raglens optimize\nchunk_size = {}\nchunk_overlap = {}\n",
+                best_cfg.chunk_size, best_cfg.chunk_overlap
+            );
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&path, content)?;
+        }
+    }
+
+    report::print_optimize(&summary, output)?;
     Ok(())
 }
 

@@ -132,3 +132,29 @@ pub struct ConfigSnapshot {
     pub embedder: String,
     pub seed: u64,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OptimizeCandidate {
+    pub chunk_size: usize,
+    pub chunk_overlap: usize,
+    pub score: f32,
+    pub avg_top1_similarity: f32,
+    pub low_similarity_queries: usize,
+    pub no_match_queries: usize,
+    pub expectation_failures: usize,
+    pub dominant_rate: f32,
+    pub documents: usize,
+    pub chunks: usize,
+    pub large_chunks: usize,
+    pub small_chunks: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OptimizeSummary {
+    pub queries_file: String,
+    pub considered: usize,
+    pub skipped: usize,
+    pub top_n: usize,
+    pub candidates: Vec<OptimizeCandidate>,
+    pub best: Option<OptimizeCandidate>,
+}

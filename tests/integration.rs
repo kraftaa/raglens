@@ -727,3 +727,55 @@ fn readiness_gate_exit_code_is_2() {
         .assert()
         .code(2);
 }
+
+#[test]
+fn explain_writes_html_output() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let out_path = std::env::temp_dir().join(format!("raglens_explain_{stamp}.html"));
+
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    cmd.arg("explain")
+        .arg("examples/docs")
+        .arg("--query")
+        .arg("refund after 90 days")
+        .arg("--html-out")
+        .arg(&out_path)
+        .assert()
+        .success();
+
+    let html = fs::read_to_string(&out_path).unwrap();
+    assert!(html.contains("RAGLens Retrieval Explanation"));
+    assert!(html.contains("refund after 90 days"));
+
+    let _ = fs::remove_file(out_path);
+}
+
+#[test]
+fn optimize_returns_best_candidate_json() {
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let output = cmd
+        .arg("optimize")
+        .arg("examples/docs")
+        .arg("--queries")
+        .arg("examples/queries_structured.txt")
+        .arg("--chunk-sizes")
+        .arg("80,120")
+        .arg("--chunk-overlaps")
+        .arg("20,40")
+        .arg("--top-n")
+        .arg("2")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let v: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(v["meta"]["command"], "optimize");
+    assert!(v["optimize"]["considered"].as_u64().unwrap_or(0) > 0);
+    assert!(v["optimize"]["best"].is_object());
+}

@@ -1,0 +1,5 @@
+refund_window	refund after 90 days	refund_policy.md,refund_old.md
+refund_late	refund after 120 days	refund_policy.md
+shipping_eta	how long does shipping take	shipping.md,faq.md
+billing_dispute	billing dispute window	billing.md,faq.md
+lost_package	lost package claim	shipping.md

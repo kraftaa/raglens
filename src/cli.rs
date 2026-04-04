@@ -31,6 +31,9 @@ pub struct Cli {
     /// Write single JSON output to this file (overrides artifacts_dir for that run)
     #[arg(long, global = true)]
     pub json_out: Option<PathBuf>,
+    /// Write HTML report output to this file (supported by explain/compare-query)
+    #[arg(long, global = true)]
+    pub html_out: Option<PathBuf>,
     /// Fail if dominant document rate exceeds this value (0-1)
     #[arg(long, global = true)]
     pub fail_on_dominant: Option<f32>,
@@ -95,6 +98,28 @@ pub enum Commands {
         path: PathBuf,
         #[arg(long)]
         query: String,
+    },
+    /// Search chunking configs and suggest best retrieval metrics
+    Optimize {
+        /// Path to documents directory
+        path: PathBuf,
+        /// Query file (yaml/plain/structured text)
+        #[arg(long)]
+        queries: PathBuf,
+        /// Comma-separated chunk sizes to test
+        #[arg(long, value_delimiter = ',', default_value = "200,300,400,600")]
+        chunk_sizes: Vec<usize>,
+        /// Comma-separated chunk overlaps to test
+        #[arg(long, value_delimiter = ',', default_value = "20,40,80")]
+        chunk_overlaps: Vec<usize>,
+        /// Show top N candidates in human output
+        #[arg(long, default_value_t = 5)]
+        top_n: usize,
+        /// Optional path to write best config snippet (.toml)
+        #[arg(long)]
+        write_config: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
     },
     /// Compare two simulation JSON reports (before/after)
     #[command(name = "compare-runs", alias = "compare", alias = "compare-sim")]

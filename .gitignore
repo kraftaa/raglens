@@ -3,5 +3,7 @@ other
 target
 .rag-audit-cache/
 artifacts/*.json
+artifacts/*.html
+artifacts/*.toml
 baseline.json
 improved.json
