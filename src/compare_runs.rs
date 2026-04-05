@@ -225,7 +225,7 @@ fn merge_top1(before: &[DocFreq], after: &[DocFreq]) -> Vec<DiffDocFreq> {
             delta: a as isize - b as isize,
         });
     }
-    diffs.sort_by(|x, y| y.after.cmp(&x.after)); // sort by after freq
+    diffs.sort_by(|x, y| y.after.cmp(&x.after).then_with(|| x.doc_id.cmp(&y.doc_id)));
     diffs
 }
 
@@ -309,7 +309,7 @@ fn default_no_match_threshold() -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, dominant_top1, QualitySignals};
+    use super::{classify, dominant_top1, merge_top1, QualitySignals};
     use super::{summarize, JsonReport, RankedChunk, ReportConfig, RetrievalResult};
 
     #[test]
@@ -393,5 +393,32 @@ mod tests {
         let (doc, rate) = dominant_top1(&freqs, 10);
         assert_eq!(doc.as_deref(), Some("a.md"));
         assert!((rate - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn merge_top1_tie_breaks_by_doc_id_for_determinism() {
+        let before = vec![
+            super::DocFreq {
+                doc_id: "b.md".into(),
+                count: 1,
+            },
+            super::DocFreq {
+                doc_id: "a.md".into(),
+                count: 1,
+            },
+        ];
+        let after = vec![
+            super::DocFreq {
+                doc_id: "b.md".into(),
+                count: 2,
+            },
+            super::DocFreq {
+                doc_id: "a.md".into(),
+                count: 2,
+            },
+        ];
+        let rows = merge_top1(&before, &after);
+        assert_eq!(rows[0].doc_id, "a.md");
+        assert_eq!(rows[1].doc_id, "b.md");
     }
 }

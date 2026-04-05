@@ -16,17 +16,8 @@ fn chunk_single(doc: &Document, config: &Config, counter: &mut usize) -> Vec<Chu
 
     for line in doc.text.lines() {
         let trimmed = line.trim();
-        let line_tokens = token_estimate(trimmed);
-        if token_count + line_tokens > config.chunk_size && !buffer.is_empty() {
-            flush_token_split(
-                &mut chunks,
-                &mut buffer,
-                &mut token_count,
-                heading_path.clone(),
-                doc,
-                config,
-                counter,
-            );
+        if trimmed.is_empty() {
+            continue;
         }
 
         // Split by heading boundaries first to keep chunks coherent per section.
@@ -45,10 +36,28 @@ fn chunk_single(doc: &Document, config: &Config, counter: &mut usize) -> Vec<Chu
             heading_path = parse_heading_path(trimmed);
         }
 
-        if !trimmed.is_empty() {
-            buffer.push_str(trimmed);
+        let segments = if trimmed.starts_with('#') {
+            vec![trimmed.to_string()]
+        } else {
+            split_text_for_chunking(trimmed, config.chunk_size)
+        };
+
+        for segment in segments {
+            let seg_tokens = token_estimate(&segment);
+            if token_count + seg_tokens > config.chunk_size && !buffer.is_empty() {
+                flush_token_split(
+                    &mut chunks,
+                    &mut buffer,
+                    &mut token_count,
+                    heading_path.clone(),
+                    doc,
+                    config,
+                    counter,
+                );
+            }
+            buffer.push_str(&segment);
             buffer.push('\n');
-            token_count += line_tokens;
+            token_count += seg_tokens;
         }
     }
 
@@ -139,6 +148,84 @@ fn token_estimate(text: &str) -> usize {
     text.split_whitespace().count()
 }
 
+fn split_text_for_chunking(text: &str, max_tokens: usize) -> Vec<String> {
+    if max_tokens == 0 || token_estimate(text) <= max_tokens {
+        return vec![text.to_string()];
+    }
+
+    let sentences = split_sentences(text);
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut buf_tokens = 0usize;
+
+    for sentence in sentences {
+        let sentence_tokens = token_estimate(&sentence);
+        if sentence_tokens > max_tokens {
+            if !buf.trim().is_empty() {
+                out.push(buf.trim().to_string());
+                buf.clear();
+                buf_tokens = 0;
+            }
+            out.extend(split_by_tokens(&sentence, max_tokens));
+            continue;
+        }
+        if buf_tokens + sentence_tokens > max_tokens && !buf.trim().is_empty() {
+            out.push(buf.trim().to_string());
+            buf.clear();
+            buf_tokens = 0;
+        }
+        if !buf.is_empty() {
+            buf.push(' ');
+        }
+        buf.push_str(&sentence);
+        buf_tokens += sentence_tokens;
+    }
+
+    if !buf.trim().is_empty() {
+        out.push(buf.trim().to_string());
+    }
+    out
+}
+
+fn split_sentences(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for (idx, ch) in text.char_indices() {
+        if !matches!(ch, '.' | '!' | '?' | ';') {
+            continue;
+        }
+        let next_start = idx + ch.len_utf8();
+        let next = text.get(next_start..).and_then(|s| s.chars().next());
+        if next.map(|c| c.is_whitespace()).unwrap_or(true) {
+            let part = text[start..next_start].trim();
+            if !part.is_empty() {
+                out.push(part.to_string());
+            }
+            start = next_start;
+        }
+    }
+    let tail = text[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail.to_string());
+    }
+    if out.is_empty() {
+        vec![text.to_string()]
+    } else {
+        out
+    }
+}
+
+fn split_by_tokens(text: &str, max_tokens: usize) -> Vec<String> {
+    if max_tokens == 0 {
+        return vec![text.to_string()];
+    }
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return vec![text.to_string()];
+    }
+    words.chunks(max_tokens).map(|w| w.join(" ")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,5 +255,48 @@ mod tests {
             .find(|c| c.text.contains("shipping content"))
             .expect("missing shipping chunk");
         assert_eq!(shipping_chunk.heading_path, vec!["Shipping".to_string()]);
+    }
+
+    #[test]
+    fn long_single_line_is_split_by_token_limit() {
+        let long_line = (0..120)
+            .map(|i| format!("w{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let doc = Document {
+            id: "doc.md".to_string(),
+            path: PathBuf::from("doc.md"),
+            title: Some("Doc".to_string()),
+            text: long_line,
+            metadata: HashMap::new(),
+        };
+        let cfg = Config {
+            chunk_size: 20,
+            chunk_overlap: 0,
+            ..Config::default()
+        };
+        let chunks = chunk_documents(&[doc], &cfg);
+        assert!(chunks.len() > 1, "expected long single-line split");
+        assert!(chunks.iter().all(|c| c.token_count <= 20));
+    }
+
+    #[test]
+    fn sentence_split_keeps_sentence_boundaries_when_possible() {
+        let doc = Document {
+            id: "doc.md".to_string(),
+            path: PathBuf::from("doc.md"),
+            title: Some("Doc".to_string()),
+            text: "First sentence has six words here. Second sentence also has six words."
+                .to_string(),
+            metadata: HashMap::new(),
+        };
+        let cfg = Config {
+            chunk_size: 7,
+            chunk_overlap: 0,
+            ..Config::default()
+        };
+        let chunks = chunk_documents(&[doc], &cfg);
+        assert!(chunks.len() >= 2);
+        assert!(chunks[0].text.ends_with('.'));
     }
 }

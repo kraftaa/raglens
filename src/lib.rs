@@ -14,7 +14,7 @@ use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands, CompareFormat};
 use config::Config;
-use model::{OptimizeCandidate, OptimizeSummary};
+use model::{FixReport, OptimizeCandidate, OptimizeSummary};
 use serde::Serialize;
 use std::fmt;
 use std::path::PathBuf;
@@ -144,6 +144,19 @@ pub fn run() -> Result<()> {
         Commands::Explain { path, query } => {
             ensure_fail_flags_supported("explain", fail_on)?;
             run_explain(path, &config, output, query)?
+        }
+        Commands::Fix {
+            path,
+            queries,
+            json,
+        } => {
+            ensure_fail_flags_supported("fix", fail_on)?;
+            run_fix(
+                path,
+                queries,
+                &config,
+                report::OutputOpts { json, ..output },
+            )?
         }
         Commands::CompareQuery { path, query } => {
             ensure_fail_flags_supported("compare-query", fail_on)?;
@@ -308,15 +321,14 @@ fn run_readiness(
 
 fn run_simulate(
     path: PathBuf,
-    queries: Option<PathBuf>,
+    queries: PathBuf,
     config: &Config,
     output: report::OutputOpts<'_>,
     fail_on: FailOnOpts,
 ) -> Result<()> {
     let corpus = prepare_corpus(path, config)?;
     let embedder = embeddings::build_embedder(config)?;
-    let sim =
-        retrieval::simulate_retrieval(&corpus, embedder.as_ref(), queries.as_deref(), config)?;
+    let sim = retrieval::simulate_retrieval(&corpus, embedder.as_ref(), Some(&queries), config)?;
     let mut findings = diagnostics::analyze_retrieval(&sim.results, &sim.queries, config);
     findings.extend(diagnostics::analyze_dominant_causes(
         &corpus,
@@ -404,6 +416,180 @@ fn run_compare(
     };
     report::print_comparison(&query, &comparison, output)?;
     Ok(())
+}
+
+fn run_fix(
+    path: PathBuf,
+    queries: PathBuf,
+    config: &Config,
+    output: report::OutputOpts<'_>,
+) -> Result<()> {
+    let docs_path = path.clone();
+    let corpus = prepare_corpus(path, config)?;
+    let embedder = embeddings::build_embedder(config)?;
+    let sim = retrieval::simulate_retrieval(&corpus, embedder.as_ref(), Some(&queries), config)?;
+    let summary = diagnostics::simulate_summary(
+        &sim.results,
+        config.low_sim_threshold,
+        config.no_match_threshold,
+    );
+    let (chunk_stats, _) = diagnostics::chunk_stats(&corpus, config);
+    let expectation_fails = expectation_failures(&sim.results, &sim.queries, config.top_k);
+
+    let dominant = summary
+        .top1_freq
+        .iter()
+        .max_by(|a, b| a.count.cmp(&b.count).then_with(|| b.doc_id.cmp(&a.doc_id)))
+        .map(|d| {
+            (
+                d.doc_id.clone(),
+                d.count as f32 / (summary.queries.max(1) as f32),
+            )
+        });
+    let dominant_doc = dominant.as_ref().map(|d| d.0.clone());
+    let dominant_rate = dominant.as_ref().map(|d| d.1).unwrap_or(0.0);
+
+    let mut issue = String::new();
+    let mut likely_causes = Vec::new();
+    let mut first_fix = String::new();
+
+    let tiny_ratio = if chunk_stats.chunks == 0 {
+        0.0
+    } else {
+        chunk_stats.small_chunks as f32 / chunk_stats.chunks as f32
+    };
+
+    if let Some((doc, rate)) = dominant {
+        if rate >= config.dominant_threshold {
+            issue = format!("{} dominates {:.0}% of top-1 results", doc, rate * 100.0);
+            if chunk_stats.p95_tokens > ((config.chunk_size as f32) * 1.4) as usize {
+                likely_causes.push("chunk size is too large for mixed-topic content".to_string());
+            }
+            if chunk_stats.duplicate_chunks > 0 {
+                likely_causes
+                    .push("duplicate/repeated chunk language boosts one document".to_string());
+            }
+            if likely_causes.is_empty() {
+                likely_causes.push(
+                    "one broad document is matching many queries more than specific docs"
+                        .to_string(),
+                );
+            }
+            let suggested = suggest_smaller_chunk_size(config, 0.5);
+            first_fix = format_reduce_chunk_size_fix(config, suggested);
+        }
+    }
+
+    if issue.is_empty() && chunk_stats.large_chunks > 0 {
+        issue = format!(
+            "{} oversized chunks detected (p95 tokens {})",
+            chunk_stats.large_chunks, chunk_stats.p95_tokens
+        );
+        likely_causes.push("chunk boundary is too coarse for document structure".to_string());
+        let suggested = suggest_smaller_chunk_size(config, 0.7);
+        first_fix = format_reduce_chunk_size_fix(config, suggested);
+    }
+
+    if issue.is_empty() && tiny_ratio >= 0.35 {
+        issue = format!("{:.0}% of chunks are too small", tiny_ratio * 100.0);
+        likely_causes.push("splitting is too aggressive for this corpus".to_string());
+        let suggested = ((config.chunk_size as f32) * 1.4).round() as usize;
+        first_fix = format!(
+            "increase chunk_size from {} to {}",
+            config.chunk_size, suggested
+        );
+    }
+
+    if issue.is_empty() && expectation_fails > 0 {
+        issue = format!("{expectation_fails} expected documents are missing in top-k");
+        likely_causes.push("relevant passages are split or diluted across chunks".to_string());
+        likely_causes.push("expected docs may be under-represented lexically".to_string());
+        let suggested = suggest_smaller_chunk_size(config, 0.5);
+        first_fix = if suggested < config.chunk_size {
+            format!(
+                "try smaller chunks first: chunk_size {} -> {}",
+                config.chunk_size, suggested
+            )
+        } else {
+            format!(
+                "chunk_size is already near minimum for overlap {}; decrease chunk_overlap first",
+                config.chunk_overlap
+            )
+        };
+    }
+
+    if issue.is_empty() && summary.no_match_queries > 0 {
+        issue = format!(
+            "{} queries have no reliable match",
+            summary.no_match_queries
+        );
+        likely_causes.push("content for those intents may be missing in the corpus".to_string());
+        likely_causes.push("query wording may not align with document wording".to_string());
+        first_fix =
+            "add/expand source docs for missed intents and include exact user phrasing".to_string();
+    }
+
+    if issue.is_empty() && summary.low_similarity_queries > 0 {
+        issue = format!(
+            "{} queries are low similarity",
+            summary.low_similarity_queries
+        );
+        likely_causes.push("retrieval language mismatch between queries and docs".to_string());
+        first_fix =
+            "add examples/aliases in docs to match how users phrase these queries".to_string();
+    }
+
+    if issue.is_empty() {
+        issue = "no major retrieval issue detected in current sample".to_string();
+        likely_causes.push(
+            "current chunking and retrieval settings are stable for tested queries".to_string(),
+        );
+        first_fix = "keep current settings; add harder queries before tuning".to_string();
+    }
+
+    let rerun = format!(
+        "raglens simulate {} --queries {}",
+        docs_path.display(),
+        queries.display()
+    );
+    let report = FixReport {
+        issue,
+        likely_causes,
+        first_fix,
+        rerun,
+        avg_top1_similarity: summary.avg_top1_similarity,
+        low_similarity_queries: summary.low_similarity_queries,
+        no_match_queries: summary.no_match_queries,
+        expectation_failures: expectation_fails,
+        dominant_doc,
+        dominant_rate,
+    };
+
+    report::print_fix(&report, output)?;
+    Ok(())
+}
+
+fn suggest_smaller_chunk_size(config: &Config, ratio: f32) -> usize {
+    let min_allowed = config.chunk_overlap + 1;
+    if config.chunk_size <= min_allowed {
+        return config.chunk_size;
+    }
+    let target = ((config.chunk_size as f32) * ratio).round() as usize;
+    target.clamp(min_allowed, config.chunk_size - 1)
+}
+
+fn format_reduce_chunk_size_fix(config: &Config, suggested: usize) -> String {
+    if suggested < config.chunk_size {
+        format!(
+            "reduce chunk_size from {} to {}",
+            config.chunk_size, suggested
+        )
+    } else {
+        format!(
+            "chunk_size is already near minimum for overlap {}; decrease chunk_overlap first",
+            config.chunk_overlap
+        )
+    }
 }
 
 fn run_optimize(opts: OptimizeOpts, config: &Config, output: report::OutputOpts<'_>) -> Result<()> {
@@ -814,4 +1000,34 @@ fn apply_fail_flags(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_reduce_chunk_size_fix, suggest_smaller_chunk_size};
+    use crate::config::Config;
+
+    #[test]
+    fn suggested_smaller_chunk_size_never_increases() {
+        let cfg = Config {
+            chunk_size: 80,
+            chunk_overlap: 20,
+            ..Config::default()
+        };
+        let suggested = suggest_smaller_chunk_size(&cfg, 0.5);
+        assert!(suggested < cfg.chunk_size);
+        assert!(suggested > cfg.chunk_overlap);
+    }
+
+    #[test]
+    fn reduce_fix_message_matches_direction() {
+        let cfg = Config {
+            chunk_size: 80,
+            chunk_overlap: 20,
+            ..Config::default()
+        };
+        let suggested = suggest_smaller_chunk_size(&cfg, 0.5);
+        let msg = format_reduce_chunk_size_fix(&cfg, suggested);
+        assert!(msg.contains("reduce chunk_size"));
+    }
 }

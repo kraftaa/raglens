@@ -31,7 +31,7 @@ pub struct Cli {
     /// Write single JSON output to this file (overrides artifacts_dir for that run)
     #[arg(long, global = true)]
     pub json_out: Option<PathBuf>,
-    /// Write HTML report output to this file (supported by explain/compare-query)
+    /// Write HTML report output to this file (supported by explain)
     #[arg(long, global = true)]
     pub html_out: Option<PathBuf>,
     /// Fail if dominant document rate exceeds this value (0-1)
@@ -51,6 +51,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Full retrieval readiness audit
+    #[command(hide = true)]
     Readiness {
         /// Path to documents directory
         path: PathBuf,
@@ -61,22 +62,41 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Simulate retrieval with synthetic or user queries
+    /// Simulate retrieval with a query set
     Simulate {
         path: PathBuf,
-        /// Optional YAML queries file
+        /// Queries file (yaml/plain/structured text)
         #[arg(long)]
-        queries: Option<PathBuf>,
+        queries: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explain why top docs ranked for one query
+    #[command(name = "explain")]
+    Explain {
+        path: PathBuf,
+        #[arg(long)]
+        query: String,
+    },
+    /// Suggest first retrieval fix to try from simulation signals
+    Fix {
+        /// Path to documents directory
+        path: PathBuf,
+        /// Query file (yaml/plain/structured text)
+        #[arg(long)]
+        queries: PathBuf,
         #[arg(long)]
         json: bool,
     },
     /// Chunk size and coherence diagnostics
+    #[command(hide = true)]
     Chunks {
         path: PathBuf,
         #[arg(long)]
         json: bool,
     },
     /// Topic coverage/imbalance detection
+    #[command(hide = true)]
     Coverage {
         path: PathBuf,
         /// Optional queries file for coverage evaluation
@@ -85,21 +105,15 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Explain why top docs ranked for a query
-    #[command(name = "explain")]
-    Explain {
-        path: PathBuf,
-        #[arg(long)]
-        query: String,
-    },
     /// Compare near-match docs/chunks for a query
-    #[command(name = "compare-query")]
+    #[command(name = "compare-query", hide = true)]
     CompareQuery {
         path: PathBuf,
         #[arg(long)]
         query: String,
     },
     /// Search chunking configs and suggest best retrieval metrics
+    #[command(hide = true)]
     Optimize {
         /// Path to documents directory
         path: PathBuf,
@@ -122,7 +136,12 @@ pub enum Commands {
         json: bool,
     },
     /// Compare two simulation JSON reports (before/after)
-    #[command(name = "compare-runs", alias = "compare", alias = "compare-sim")]
+    #[command(
+        name = "compare-runs",
+        alias = "compare",
+        alias = "compare-sim",
+        hide = true
+    )]
     CompareRuns {
         /// Baseline simulation JSON
         baseline: PathBuf,
@@ -157,7 +176,7 @@ pub enum Commands {
         json: bool,
     },
     /// Run built-in smoke checks on a corpus and query set
-    #[command(name = "self-test")]
+    #[command(name = "self-test", hide = true)]
     SelfTest {
         /// Path to documents directory
         #[arg(long, default_value = "examples/docs")]

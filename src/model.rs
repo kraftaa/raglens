@@ -158,3 +158,17 @@ pub struct OptimizeSummary {
     pub candidates: Vec<OptimizeCandidate>,
     pub best: Option<OptimizeCandidate>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FixReport {
+    pub issue: String,
+    pub likely_causes: Vec<String>,
+    pub first_fix: String,
+    pub rerun: String,
+    pub avg_top1_similarity: f32,
+    pub low_similarity_queries: usize,
+    pub no_match_queries: usize,
+    pub expectation_failures: usize,
+    pub dominant_doc: Option<String>,
+    pub dominant_rate: f32,
+}

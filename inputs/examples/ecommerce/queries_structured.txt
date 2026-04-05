@@ -1,0 +1,7 @@
+refund_window	refund after 90 days	refund_policy_current.md,refund_policy_legacy.md
+refund_late	refund after 120 days	refund_policy_current.md
+shipping_eta	how long does shipping take	shipping_policy.md,faq.md
+lost_package	lost package claim	shipping_policy.md
+billing_dispute	billing dispute time window	billing_disputes.md,faq.md
+cancel_annual	cancel annual subscription	subscription_cancellations.md
+warranty_vs_refund	warranty replacement vs refund	warranty.md,refund_policy_current.md

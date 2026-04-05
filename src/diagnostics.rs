@@ -593,7 +593,11 @@ fn compute_overlaps(corpus: &Corpus) -> Vec<usize> {
         by_doc.entry(chunk.doc_id.clone()).or_default().push(chunk);
     }
     for (_doc, chunks) in by_doc.iter_mut() {
-        chunks.sort_by_key(|c| c.chunk_id.clone());
+        chunks.sort_by(|a, b| {
+            let ai = chunk_index(&a.chunk_id);
+            let bi = chunk_index(&b.chunk_id);
+            ai.cmp(&bi).then_with(|| a.chunk_id.cmp(&b.chunk_id))
+        });
         for pair in chunks.windows(2) {
             if let [a, b] = pair {
                 overlaps.push(overlap_tokens(&a.text, &b.text));
@@ -624,6 +628,13 @@ fn percentile(sorted: &[usize], pct: usize) -> usize {
     }
     let idx = ((pct as f32 / 100.0) * (sorted.len() as f32 - 1.0)).round() as usize;
     sorted[idx]
+}
+
+fn chunk_index(chunk_id: &str) -> usize {
+    chunk_id
+        .rsplit_once('#')
+        .and_then(|(_, idx)| idx.parse::<usize>().ok())
+        .unwrap_or(usize::MAX)
 }
 
 #[cfg(test)]
@@ -910,5 +921,45 @@ mod tests {
             !findings.iter().any(|f| f.code == "EXPECTATION_MISS"),
             "should pass when any expected doc appears in top-k"
         );
+    }
+
+    #[test]
+    fn overlap_order_uses_numeric_chunk_suffix() {
+        let corpus = Corpus {
+            documents: vec![Document {
+                id: "doc.md".into(),
+                path: PathBuf::from("doc.md"),
+                title: Some("Doc".into()),
+                text: "body".into(),
+                metadata: HashMap::new(),
+            }],
+            chunks: vec![
+                Chunk {
+                    chunk_id: "doc.md#10".into(),
+                    doc_id: "doc.md".into(),
+                    text: "delta epsilon".into(),
+                    token_count: 2,
+                    heading_path: vec![],
+                },
+                Chunk {
+                    chunk_id: "doc.md#2".into(),
+                    doc_id: "doc.md".into(),
+                    text: "alpha beta".into(),
+                    token_count: 2,
+                    heading_path: vec![],
+                },
+                Chunk {
+                    chunk_id: "doc.md#3".into(),
+                    doc_id: "doc.md".into(),
+                    text: "beta gamma".into(),
+                    token_count: 2,
+                    heading_path: vec![],
+                },
+            ],
+        };
+
+        let overlaps = compute_overlaps(&corpus);
+        assert_eq!(overlaps.len(), 2);
+        assert_eq!(overlaps[0], 1, "expected overlap between #2 and #3");
     }
 }

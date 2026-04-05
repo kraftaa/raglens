@@ -2,7 +2,8 @@ use crate::cli::CompareFormat;
 use crate::compare_runs::SimDiff;
 use crate::config::Config;
 use crate::model::{
-    ChunkStats, ConfigSnapshot, Corpus, CoverageSummary, Finding, OptimizeSummary, RetrievalResult,
+    ChunkStats, ConfigSnapshot, Corpus, CoverageSummary, Finding, FixReport, OptimizeSummary,
+    RetrievalResult,
 };
 use crate::retrieval::{CompareReport, ExplanationReport, QuerySpec};
 use anyhow::Result;
@@ -786,6 +787,48 @@ pub fn print_optimize(summary: &OptimizeSummary, output: OutputOpts<'_>) -> Resu
     Ok(())
 }
 
+pub fn print_fix(fix: &FixReport, output: OutputOpts<'_>) -> Result<()> {
+    #[derive(Serialize)]
+    struct FixJson<'a> {
+        meta: ReportMeta,
+        fix: &'a FixReport,
+    }
+
+    let payload = FixJson {
+        meta: report_meta("fix"),
+        fix,
+    };
+    write_artifact(output, "fix.json", &payload)?;
+    if output.json {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+
+    println!("Retrieval Fix Advisor");
+    println!("=====================");
+    println!();
+    println!("Issue: {}", fix.issue);
+    println!();
+    println!("Likely causes:");
+    for cause in &fix.likely_causes {
+        println!("- {}", cause);
+    }
+    println!();
+    println!("Try first: {}", fix.first_fix);
+    println!("Then rerun: {}", fix.rerun);
+    println!();
+    println!(
+        "Signals: avg_top1 {:.3} | weak {} | no-match {} | expectation fails {} | dominant {:.0}% {}",
+        fix.avg_top1_similarity,
+        fix.low_similarity_queries,
+        fix.no_match_queries,
+        fix.expectation_failures,
+        fix.dominant_rate * 100.0,
+        fix.dominant_doc.as_deref().unwrap_or("<none>")
+    );
+    Ok(())
+}
+
 #[derive(Serialize, Clone)]
 struct ExpectationOutcome {
     query_id: String,
@@ -810,6 +853,8 @@ fn expectation_outcomes(
     queries: &[QuerySpec],
     top_k: usize,
 ) -> Vec<ExpectationOutcome> {
+    use std::collections::HashSet;
+
     let mut out = Vec::new();
     for spec in queries {
         if spec.expect_docs.is_empty() {
@@ -827,26 +872,29 @@ fn expectation_outcomes(
                         .map(|c| c.rank)
                 })
                 .min();
-            let top_docs: Vec<String> = r
-                .ranked
-                .iter()
-                .take(3)
-                .map(|c| crate::diagnostics::chunk_doc_id(&c.chunk_id))
-                .collect();
+            let mut seen_docs = HashSet::new();
+            let mut top_docs = Vec::new();
+            for c in r.ranked.iter().take(3) {
+                let doc = crate::diagnostics::chunk_doc_id(&c.chunk_id);
+                if seen_docs.insert(doc.clone()) {
+                    top_docs.push(doc);
+                }
+            }
             (best, top_docs)
         } else {
             (None, Vec::new())
         };
 
         let top_doc_ranks = result.map(|r| {
-            r.ranked
-                .iter()
-                .take(3)
-                .map(|c| RankEntry {
-                    doc: crate::diagnostics::chunk_doc_id(&c.chunk_id),
-                    rank: c.rank,
-                })
-                .collect::<Vec<_>>()
+            let mut seen_docs = HashSet::new();
+            let mut rows = Vec::new();
+            for c in r.ranked.iter().take(3) {
+                let doc = crate::diagnostics::chunk_doc_id(&c.chunk_id);
+                if seen_docs.insert(doc.clone()) {
+                    rows.push(RankEntry { doc, rank: c.rank });
+                }
+            }
+            rows
         });
 
         let expected_ranks = result.map(|r| {
@@ -884,4 +932,53 @@ fn expectation_outcomes(
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expectation_outcomes;
+    use crate::model::{RankedChunk, RetrievalResult};
+    use crate::retrieval::QuerySpec;
+
+    #[test]
+    fn expectation_preview_dedupes_duplicate_docs_in_top3() {
+        let retrievals = vec![RetrievalResult {
+            query_id: "q1".to_string(),
+            query_text: "refund".to_string(),
+            ranked: vec![
+                RankedChunk {
+                    chunk_id: "faq.md#0".to_string(),
+                    score: 0.9,
+                    rank: 1,
+                },
+                RankedChunk {
+                    chunk_id: "faq.md#1".to_string(),
+                    score: 0.8,
+                    rank: 2,
+                },
+                RankedChunk {
+                    chunk_id: "refund.md#0".to_string(),
+                    score: 0.7,
+                    rank: 3,
+                },
+            ],
+        }];
+        let queries = vec![QuerySpec {
+            id: "q1".to_string(),
+            query: "refund".to_string(),
+            expect_docs: vec!["refund.md".to_string()],
+        }];
+
+        let rows = expectation_outcomes(&retrievals, &queries, 5);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].top_docs, vec!["faq.md", "refund.md"]);
+        assert_eq!(
+            rows[0]
+                .top_doc_ranks
+                .as_ref()
+                .expect("top_doc_ranks should exist")
+                .len(),
+            2
+        );
+    }
 }

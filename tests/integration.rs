@@ -779,3 +779,53 @@ fn optimize_returns_best_candidate_json() {
     assert!(v["optimize"]["considered"].as_u64().unwrap_or(0) > 0);
     assert!(v["optimize"]["best"].is_object());
 }
+
+#[test]
+fn fix_returns_advice_json() {
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let output = cmd
+        .arg("fix")
+        .arg("examples/docs")
+        .arg("--queries")
+        .arg("examples/queries_structured.txt")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let v: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(v["meta"]["command"], "fix");
+    assert!(!v["fix"]["issue"].as_str().unwrap_or("").is_empty());
+    assert!(!v["fix"]["first_fix"].as_str().unwrap_or("").is_empty());
+}
+
+#[test]
+fn help_shows_mvp_commands_and_hides_advanced_commands() {
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("--help")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let txt = String::from_utf8_lossy(&out);
+    assert!(txt.contains("explain"));
+    assert!(txt.contains("simulate"));
+    assert!(txt.contains("fix"));
+    assert!(!txt.contains("readiness"));
+    assert!(!txt.contains("compare-runs"));
+    assert!(!txt.contains("optimize"));
+}
+
+#[test]
+fn simulate_requires_queries_flag() {
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    cmd.arg("simulate")
+        .arg("examples/docs")
+        .assert()
+        .failure()
+        .stderr(contains("--queries <QUERIES>"));
+}

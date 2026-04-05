@@ -1,0 +1,10 @@
+# Add real docs/pages here (public help centers, policy pages, docs)
+# One URL per line.
+https://www.rfc-editor.org/rfc/rfc9110
+https://www.rfc-editor.org/rfc/rfc7231
+https://www.usa.gov/benefit-finder
+https://www.usa.gov/consumer-complaints
+https://www.nist.gov/privacy-policy
+https://www.nist.gov/cyberframework
+https://docs.github.com/en/get-started/start-your-journey/about-github-and-git
+https://docs.github.com/en/get-started/quickstart/hello-world

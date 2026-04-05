@@ -157,15 +157,17 @@ fn load_queries(path: &Path) -> Result<Vec<QuerySpec>> {
     // Optional structured format per line:
     // id<TAB>query<TAB>expect_doc1,expect_doc2
     let mut out = Vec::new();
-    for (i, line) in content.lines().enumerate() {
+    let mut line_query_index = 0usize;
+    for line in content.lines() {
         let q = line.trim();
-        if q.is_empty() {
+        if q.is_empty() || q.starts_with('#') {
             continue;
         }
+        line_query_index += 1;
         let parts: Vec<&str> = q.splitn(3, '\t').collect();
         if parts.len() >= 2 {
             let id = if parts[0].trim().is_empty() {
-                format!("q{}", i + 1)
+                format!("q{}", line_query_index)
             } else {
                 parts[0].trim().to_string()
             };
@@ -188,7 +190,7 @@ fn load_queries(path: &Path) -> Result<Vec<QuerySpec>> {
             continue;
         }
         out.push(QuerySpec {
-            id: format!("q{}", i + 1),
+            id: format!("q{}", line_query_index),
             query: q.to_string(),
             expect_docs: Vec::new(),
         });
@@ -369,7 +371,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!("rag_audit_queries_{stamp}.txt"));
-        let data = "refund_window\trefund after 90 days\trefund_policy.md,faq.md\nshipping\tshipping delay\nplain fallback query\n";
+        let data = "# comment\nrefund_window\trefund after 90 days\trefund_policy.md,faq.md\nshipping\tshipping delay\nplain fallback query\n";
         fs::write(&path, data).unwrap();
 
         let parsed = load_queries(&path).unwrap();
@@ -400,6 +402,26 @@ mod tests {
 
         let err = load_queries(&path).expect_err("invalid yaml should return an error");
         assert!(err.to_string().contains("parsing YAML queries"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_queries_ignores_blank_and_comment_lines() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("rag_audit_queries_comment_{stamp}.txt"));
+        let data = "\n# comment 1\n\nfirst query\n# comment 2\nsecond query\n";
+        fs::write(&path, data).unwrap();
+
+        let parsed = load_queries(&path).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].id, "q1");
+        assert_eq!(parsed[0].query, "first query");
+        assert_eq!(parsed[1].id, "q2");
+        assert_eq!(parsed[1].query, "second query");
 
         let _ = fs::remove_file(path);
     }
