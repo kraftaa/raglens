@@ -33,6 +33,7 @@ cargo run -- compare-runs baseline.json improved.json --fail-if-regressed
 - `README.md` examples match current CLI output/options.
 - `artifacts/README.md` matches artifact schema.
 - `Cargo.toml` has correct package metadata/version.
+- `pyproject.toml` version matches `Cargo.toml` version.
 
 ## 5) Packaging sanity check
 
@@ -45,6 +46,12 @@ Review package output and ensure only intended files are included.
 ## 6) Tag/release prep
 
 - Bump version in `Cargo.toml`.
+- Bump version in `pyproject.toml`.
 - Update changelog/release notes.
 - Re-run steps 1–5.
 - Create git tag for the version.
+
+## 7) Publishing secrets/config
+
+- `CARGO_REGISTRY_TOKEN` is set (if publishing crate).
+- `PYPI_API_TOKEN` is set (if publishing PyPI wheel).

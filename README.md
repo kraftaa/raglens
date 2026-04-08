@@ -34,6 +34,13 @@ cargo install --path .
 raglens --help
 ```
 
+Install with pip (no Rust toolchain required once wheels are published):
+
+```bash
+pip install raglens
+raglens --help
+```
+
 ## Primary Commands
 
 ### `explain`

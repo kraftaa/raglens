@@ -1,6 +1,8 @@
 TECHNICAL_SPEC.md
 other
 target
+dist/
+target/wheels/
 .rag-audit-cache/
 artifacts/*.json
 artifacts/*.html

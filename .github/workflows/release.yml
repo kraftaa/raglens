@@ -1,0 +1,229 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build (branch/tag/sha)"
+        required: false
+      publish_to_pypi:
+        description: "Publish to PyPI"
+        required: true
+        default: "false"
+      publish_to_crates:
+        description: "Publish crate to crates.io"
+        required: true
+        default: "false"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-wheels-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install maturin and zig
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin
+          pip install ziglang
+
+      - name: Build wheel
+        run: maturin build --release --manifest-path Cargo.toml --target ${{ matrix.target }} --zig
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: target/wheels/*.whl
+
+  build-wheels-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install maturin
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin
+
+      - name: Build wheel
+        run: maturin build --release --manifest-path Cargo.toml --target ${{ matrix.target }}
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: target/wheels/*.whl
+
+  build-binaries:
+    name: Build binary (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            exe_suffix: ""
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            exe_suffix: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            exe_suffix: ".exe"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binaries
+        run: cargo build --release --bins --target ${{ matrix.target }}
+
+      - name: Package archive (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          REF_NAME="$(echo "${{ github.ref_name }}" | tr '/ ' '__')"
+          NAME="raglens-${REF_NAME}-${{ matrix.target }}"
+          cp "target/${{ matrix.target }}/release/raglens${{ matrix.exe_suffix }}" ./raglens
+          cp "target/${{ matrix.target }}/release/rag-audit${{ matrix.exe_suffix }}" ./rag-audit
+          tar -czf "dist/${NAME}.tar.gz" ./raglens ./rag-audit
+
+      - name: Package archive (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $refName = "${{ github.ref_name }}".Replace('/', '__').Replace(' ', '__')
+          $name = "raglens-$refName-${{ matrix.target }}"
+          Copy-Item "target/${{ matrix.target }}/release/raglens${{ matrix.exe_suffix }}" "raglens${{ matrix.exe_suffix }}"
+          Copy-Item "target/${{ matrix.target }}/release/rag-audit${{ matrix.exe_suffix }}" "rag-audit${{ matrix.exe_suffix }}"
+          Compress-Archive -Path "raglens${{ matrix.exe_suffix }}","rag-audit${{ matrix.exe_suffix }}" -DestinationPath "dist/${name}.zip" -Force
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: dist/*
+
+  publish-pypi:
+    needs: [build-wheels-linux, build-wheels-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_to_pypi == 'true')
+    environment: release
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Publish to PyPI
+        if: ${{ secrets.PYPI_API_TOKEN != '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: Skip publish (no token configured)
+        if: ${{ secrets.PYPI_API_TOKEN == '' }}
+        run: echo "PYPI_API_TOKEN is not configured; skipping PyPI publish."
+
+  publish-crate:
+    runs-on: ubuntu-latest
+    needs: [build-binaries]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_to_crates == 'true')
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Package check
+        run: cargo package
+
+      - name: Publish to crates.io
+        if: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
+
+      - name: Skip publish (no token configured)
+        if: ${{ secrets.CARGO_REGISTRY_TOKEN == '' }}
+        run: echo "CARGO_REGISTRY_TOKEN is not configured; skipping cargo publish."
+
+  github-release:
+    needs: [build-wheels-linux, build-wheels-macos, build-binaries]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.zip
+          generate_release_notes: true
