@@ -718,8 +718,10 @@ fn compare_runs_fail_if_query_count_mismatch() {
 #[test]
 fn readiness_gate_exit_code_is_2() {
     let mut cmd = Command::cargo_bin("rag-audit").unwrap();
-    cmd.arg("--fail-on-weak")
-        .arg("0")
+    // Use dominant gate with threshold 0 for a stable deterministic failure:
+    // any non-empty retrieval run has some top-1 document with rate > 0.
+    cmd.arg("--fail-on-dominant")
+        .arg("0.0")
         .arg("readiness")
         .arg("examples/docs")
         .arg("--queries")
