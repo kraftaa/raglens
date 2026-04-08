@@ -156,8 +156,6 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_to_pypi == 'true')
     environment: release
-    env:
-      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
     steps:
       - name: Download all wheels
         uses: actions/download-artifact@v4
@@ -167,14 +165,7 @@ jobs:
           path: dist/
 
       - name: Publish to PyPI
-        if: ${{ env.PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ env.PYPI_API_TOKEN }}
-
-      - name: Skip publish (no token configured)
-        if: ${{ env.PYPI_API_TOKEN == '' }}
-        run: echo "PYPI_API_TOKEN is not configured; skipping PyPI publish."
 
   publish-crate:
     runs-on: ubuntu-latest
