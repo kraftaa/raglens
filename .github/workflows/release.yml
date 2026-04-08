@@ -156,6 +156,8 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_to_pypi == 'true')
     environment: release
+    env:
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
     steps:
       - name: Download all wheels
         uses: actions/download-artifact@v4
@@ -165,13 +167,13 @@ jobs:
           path: dist/
 
       - name: Publish to PyPI
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
+        if: ${{ env.PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          password: ${{ env.PYPI_API_TOKEN }}
 
       - name: Skip publish (no token configured)
-        if: ${{ secrets.PYPI_API_TOKEN == '' }}
+        if: ${{ env.PYPI_API_TOKEN == '' }}
         run: echo "PYPI_API_TOKEN is not configured; skipping PyPI publish."
 
   publish-crate:
@@ -179,6 +181,8 @@ jobs:
     needs: [build-binaries]
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_to_crates == 'true')
     environment: release
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -191,13 +195,11 @@ jobs:
         run: cargo package
 
       - name: Publish to crates.io
-        if: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
         run: cargo publish --locked
 
       - name: Skip publish (no token configured)
-        if: ${{ secrets.CARGO_REGISTRY_TOKEN == '' }}
+        if: ${{ env.CARGO_REGISTRY_TOKEN == '' }}
         run: echo "CARGO_REGISTRY_TOKEN is not configured; skipping cargo publish."
 
   github-release:
