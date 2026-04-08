@@ -3,7 +3,7 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "raglens"
+name = "raglens-cli"
 version = "0.1.0"
 description = "RAGLens CLI for debugging retrieval behavior in RAG systems"
 readme = "README.md"

@@ -37,7 +37,7 @@ raglens --help
 Install with pip (no Rust toolchain required once wheels are published):
 
 ```bash
-pip install raglens
+pip install raglens-cli
 raglens --help
 ```
 
