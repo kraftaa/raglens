@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "raglens-cli"
-version = "0.1.1"
+version = "0.1.2"
 description = "RAGLens CLI for debugging retrieval behavior in RAG systems"
 readme = "README.md"
 requires-python = ">=3.9"

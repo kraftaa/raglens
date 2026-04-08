@@ -1,3 +1,4 @@
+mod answer_audit;
 mod chunker;
 mod cli;
 mod compare_runs;
@@ -12,11 +13,12 @@ mod retrieval;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands, CompareFormat};
+use cli::{Cli, Commands, CompareFormat, PeriodGranularity};
 use config::Config;
 use model::{FixReport, OptimizeCandidate, OptimizeSummary};
 use serde::Serialize;
 use std::fmt;
+use std::fs;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy)]
@@ -155,6 +157,42 @@ pub fn run() -> Result<()> {
                 path,
                 queries,
                 &config,
+                report::OutputOpts { json, ..output },
+            )?
+        }
+        Commands::AnswerAudit {
+            data,
+            auto,
+            period_granularity,
+            group_by,
+            metric,
+            period_col,
+            baseline,
+            current,
+            question,
+            answer,
+            weak_contribution_threshold,
+            json,
+        } => {
+            ensure_fail_flags_supported("answer-audit", fail_on)?;
+            run_answer_audit(
+                answer_audit::AnswerAuditInput {
+                    data,
+                    auto,
+                    period_granularity: match period_granularity {
+                        PeriodGranularity::Raw => "raw".to_string(),
+                        PeriodGranularity::Month => "month".to_string(),
+                        PeriodGranularity::Week => "week".to_string(),
+                    },
+                    group_by,
+                    metric,
+                    period_col,
+                    baseline,
+                    current,
+                    question,
+                    answer,
+                    weak_contribution_threshold,
+                },
                 report::OutputOpts { json, ..output },
             )?
         }
@@ -566,6 +604,113 @@ fn run_fix(
     };
 
     report::print_fix(&report, output)?;
+    Ok(())
+}
+
+fn run_answer_audit(
+    input: answer_audit::AnswerAuditInput,
+    output: report::OutputOpts<'_>,
+) -> Result<()> {
+    let (req, auto_notes) = answer_audit::resolve_input(input)?;
+    let report = answer_audit::audit_answer(&req)?;
+
+    #[derive(Serialize)]
+    struct AnswerAuditJson<'a> {
+        meta: AnswerAuditMeta,
+        auto_notes: &'a [String],
+        audit: &'a answer_audit::AnswerAuditReport,
+    }
+
+    #[derive(Serialize)]
+    struct AnswerAuditMeta {
+        schema_version: &'static str,
+        tool_version: &'static str,
+        command: &'static str,
+    }
+
+    let payload = AnswerAuditJson {
+        meta: AnswerAuditMeta {
+            schema_version: "1",
+            tool_version: env!("CARGO_PKG_VERSION"),
+            command: "answer-audit",
+        },
+        auto_notes: &auto_notes,
+        audit: &report,
+    };
+
+    write_json_artifact(output, "answer_audit.json", &payload)?;
+
+    if output.json {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+
+    println!("AI Answer Audit");
+    println!("===============");
+    println!();
+    if !auto_notes.is_empty() {
+        println!("Resolved config:");
+        for note in &auto_notes {
+            println!("- {}", note);
+        }
+        println!();
+    }
+    if let Some(question) = &report.question {
+        println!("Question: {}", question);
+    }
+    println!("Answer: {}", report.answer);
+    println!();
+    println!("Verdict: {}", report.verdict);
+    println!(
+        "Periods: baseline '{}' -> current '{}'",
+        report.baseline_period, report.current_period
+    );
+    println!("Total delta: {:+.2}", report.total_delta);
+    println!();
+
+    println!("Top Drivers:");
+    for d in &report.top_drivers {
+        println!(
+            "- {}: {:+.2} ({:+.1}%)",
+            d.label, d.delta, d.contribution_pct
+        );
+    }
+    println!();
+
+    if report.issues.is_empty() {
+        println!("Issues: none");
+    } else {
+        println!("Issues:");
+        for issue in &report.issues {
+            println!("- {}: {}", issue.code, issue.message);
+        }
+    }
+    println!();
+    println!(
+        "Coverage: {:.0}% | Alignment score: {:.2} | Confidence: {}",
+        report.coverage_pct, report.alignment_score, report.confidence
+    );
+    Ok(())
+}
+
+fn write_json_artifact<T: Serialize>(
+    output: report::OutputOpts<'_>,
+    filename: &str,
+    payload: &T,
+) -> Result<()> {
+    if let Some(path) = output.json_out {
+        let data = serde_json::to_vec_pretty(payload)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, data)?;
+        return Ok(());
+    }
+    if let Some(dir) = output.artifacts {
+        let data = serde_json::to_vec_pretty(payload)?;
+        fs::create_dir_all(dir)?;
+        fs::write(dir.join(filename), data)?;
+    }
     Ok(())
 }
 

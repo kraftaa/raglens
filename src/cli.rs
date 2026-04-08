@@ -88,6 +88,45 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Experimental: audit an LLM answer against deterministic CSV truth
+    #[command(name = "answer-audit", hide = true)]
+    AnswerAudit {
+        /// CSV data file
+        #[arg(long)]
+        data: PathBuf,
+        /// Infer missing schema fields from CSV headers/data
+        #[arg(long, default_value_t = false)]
+        auto: bool,
+        /// Bucket period values before comparison: raw | month | week
+        #[arg(long, value_enum, default_value_t = PeriodGranularity::Raw)]
+        period_granularity: PeriodGranularity,
+        /// Comma-separated grouping columns
+        #[arg(long, value_delimiter = ',')]
+        group_by: Vec<String>,
+        /// Numeric metric column
+        #[arg(long)]
+        metric: Option<String>,
+        /// Period column
+        #[arg(long)]
+        period_col: Option<String>,
+        /// Baseline period value
+        #[arg(long)]
+        baseline: Option<String>,
+        /// Current period value
+        #[arg(long)]
+        current: Option<String>,
+        /// Optional question text for report context
+        #[arg(long)]
+        question: Option<String>,
+        /// LLM answer text to audit
+        #[arg(long)]
+        answer: String,
+        /// Weak contribution threshold ratio (0.10 = 10%)
+        #[arg(long, default_value_t = 0.10)]
+        weak_contribution_threshold: f64,
+        #[arg(long)]
+        json: bool,
+    },
     /// Chunk size and coherence diagnostics
     #[command(hide = true)]
     Chunks {
@@ -194,4 +233,11 @@ pub enum Commands {
 pub enum CompareFormat {
     Summary,
     Table,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum PeriodGranularity {
+    Raw,
+    Month,
+    Week,
 }

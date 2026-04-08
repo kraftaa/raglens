@@ -1,0 +1,7 @@
+region,channel,period,revenue
+US,Direct,old,100
+US,Direct,new,160
+LATAM,Online,old,10
+LATAM,Online,new,11
+EU,Partner,old,120
+EU,Partner,new,118

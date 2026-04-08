@@ -162,6 +162,72 @@ Notes:
 RAGLens includes additional advanced commands for deeper workflows (comparison, optimization, etc.).
 They are intentionally hidden from default help to keep the MVP interface focused.
 
+Experimental deterministic answer checker (CSV truth layer):
+
+```bash
+raglens answer-audit \
+  --data ./inputs/examples/answer_audit/sales.csv \
+  --group-by region,channel \
+  --metric revenue \
+  --period-col period \
+  --baseline old \
+  --current new \
+  --question "Why did revenue increase?" \
+  --answer "Revenue increased due to EU growth"
+```
+
+Unknown dataset quick start (auto infer schema):
+
+```bash
+raglens answer-audit \
+  --data ./my_data.csv \
+  --auto \
+  --answer "Revenue increased because EU grew"
+```
+
+`--auto` infers:
+- metric column
+- period column
+- baseline/current period values
+- group-by columns
+
+Optional period bucketing:
+
+```bash
+raglens answer-audit \
+  --data ./my_data.csv \
+  --auto \
+  --period-granularity month \
+  --answer "Revenue increased because EU grew"
+```
+
+- `--period-granularity raw|month|week` (default `raw`)
+- `month`/`week` require parseable date-like period values
+
+More answer-audit examples:
+
+```bash
+# expected verdict: SUPPORTED
+raglens answer-audit \
+  --data ./inputs/examples/answer_audit/sales_supported.csv \
+  --group-by region,channel \
+  --metric revenue \
+  --period-col period \
+  --baseline old \
+  --current new \
+  --answer "Revenue increased due to strong US Direct growth"
+
+# expected verdict: RISKY (mentions weak contributor)
+raglens answer-audit \
+  --data ./inputs/examples/answer_audit/sales_risky.csv \
+  --group-by region,channel \
+  --metric revenue \
+  --period-col period \
+  --baseline old \
+  --current new \
+  --answer "Revenue increased due to US Direct and LATAM growth"
+```
+
 ## Non-Goals
 
 - Full RAG framework

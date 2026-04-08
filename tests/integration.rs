@@ -823,6 +823,161 @@ fn help_shows_mvp_commands_and_hides_advanced_commands() {
 }
 
 #[test]
+fn answer_audit_detects_contradiction_from_example_csv() {
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("answer-audit")
+        .arg("--data")
+        .arg("inputs/examples/answer_audit/sales.csv")
+        .arg("--group-by")
+        .arg("region,channel")
+        .arg("--metric")
+        .arg("revenue")
+        .arg("--period-col")
+        .arg("period")
+        .arg("--baseline")
+        .arg("old")
+        .arg("--current")
+        .arg("new")
+        .arg("--question")
+        .arg("Why did revenue increase?")
+        .arg("--answer")
+        .arg("Revenue increased due to EU growth")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["meta"]["command"], "answer-audit");
+    assert_eq!(v["audit"]["verdict"], "INCORRECT");
+}
+
+#[test]
+fn answer_audit_supported_example() {
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("answer-audit")
+        .arg("--data")
+        .arg("inputs/examples/answer_audit/sales_supported.csv")
+        .arg("--group-by")
+        .arg("region,channel")
+        .arg("--metric")
+        .arg("revenue")
+        .arg("--period-col")
+        .arg("period")
+        .arg("--baseline")
+        .arg("old")
+        .arg("--current")
+        .arg("new")
+        .arg("--answer")
+        .arg("Revenue increased due to strong US Direct growth")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["audit"]["verdict"], "SUPPORTED");
+}
+
+#[test]
+fn answer_audit_risky_example() {
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("answer-audit")
+        .arg("--data")
+        .arg("inputs/examples/answer_audit/sales_risky.csv")
+        .arg("--group-by")
+        .arg("region,channel")
+        .arg("--metric")
+        .arg("revenue")
+        .arg("--period-col")
+        .arg("period")
+        .arg("--baseline")
+        .arg("old")
+        .arg("--current")
+        .arg("new")
+        .arg("--answer")
+        .arg("Revenue increased due to US Direct and LATAM growth")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["audit"]["verdict"], "RISKY");
+}
+
+#[test]
+fn answer_audit_auto_infers_schema() {
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("answer-audit")
+        .arg("--data")
+        .arg("inputs/examples/answer_audit/sales.csv")
+        .arg("--auto")
+        .arg("--answer")
+        .arg("Revenue increased due to EU growth")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["audit"]["verdict"], "INCORRECT");
+    assert!(
+        v["auto_notes"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
+        "auto_notes should include inferred fields"
+    );
+}
+
+#[test]
+fn answer_audit_month_granularity_buckets_dates() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_answer_audit_month_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let csv_path = dir.join("sales.csv");
+    fs::write(
+        &csv_path,
+        "region,channel,date,revenue\nUS,Direct,2026-01-03,100\nUS,Direct,2026-01-28,110\nUS,Direct,2026-02-02,260\nEU,Partner,2026-01-12,80\nEU,Partner,2026-02-14,70\n",
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("answer-audit")
+        .arg("--data")
+        .arg(&csv_path)
+        .arg("--auto")
+        .arg("--period-granularity")
+        .arg("month")
+        .arg("--answer")
+        .arg("Revenue increased due to US Direct growth")
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["audit"]["baseline_period"], "2026-01");
+    assert_eq!(v["audit"]["current_period"], "2026-02");
+    assert_eq!(v["audit"]["verdict"], "SUPPORTED");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn simulate_requires_queries_flag() {
     let mut cmd = Command::cargo_bin("rag-audit").unwrap();
     cmd.arg("simulate")
