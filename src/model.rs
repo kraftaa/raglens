@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -171,4 +171,122 @@ pub struct FixReport {
     pub expectation_failures: usize,
     pub dominant_doc: Option<String>,
     pub dominant_rate: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunArtifact {
+    pub question: String,
+    pub answer: String,
+    #[serde(default)]
+    pub retrieved_docs: Vec<RetrievedDoc>,
+    #[serde(default)]
+    pub claims: Vec<Claim>,
+    #[serde(default)]
+    pub metrics: Option<RunMetrics>,
+    #[serde(default)]
+    pub context: Option<RunContext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RetrievedDoc {
+    pub id: String,
+    pub text: String,
+    #[serde(default)]
+    pub score: Option<f64>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<BTreeMap<String, serde_json::Value>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Claim {
+    pub text: String,
+    #[serde(default)]
+    pub supported: Option<bool>,
+    #[serde(default)]
+    pub evidence_doc_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunMetrics {
+    #[serde(default)]
+    pub total_delta: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RunContext {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub top_k: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AnswerDiff {
+    pub changed: bool,
+    pub change_type: AnswerChangeType,
+    pub baseline_answer: String,
+    pub current_answer: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerChangeType {
+    Equivalent,
+    EmphasisShift,
+    MoreSpecific,
+    Contradictory,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommonDocDiff {
+    pub id: String,
+    pub baseline_score: Option<f64>,
+    pub current_score: Option<f64>,
+    pub score_delta: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RetrievalDiff {
+    pub added_docs: Vec<RetrievedDoc>,
+    pub removed_docs: Vec<RetrievedDoc>,
+    pub common_docs: Vec<CommonDocDiff>,
+    pub changed: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AlignmentResult {
+    pub baseline_best_doc_id: Option<String>,
+    pub current_best_doc_id: Option<String>,
+    pub baseline_overlap: f64,
+    pub current_overlap: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RootCause {
+    NoMeaningfulChange,
+    AnswerGenerationChanged,
+    RetrievalChanged,
+    RetrievalChangedButAnswerStable,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Confidence {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DiffReport {
+    pub question: String,
+    pub answer_diff: AnswerDiff,
+    pub retrieval_diff: RetrievalDiff,
+    pub alignment: Option<AlignmentResult>,
+    pub root_cause: RootCause,
+    pub confidence: Confidence,
+    pub confidence_reason: String,
 }

@@ -1,0 +1,22 @@
+{
+  "question": "Why did revenue increase?",
+  "answer": "Revenue decreased due to US decline.",
+  "retrieved_docs": [
+    {
+      "id": "sales_summary_q2",
+      "text": "US Direct revenue increased by 40 while EU Partner declined by 20.",
+      "score": 0.91,
+      "source": "kb",
+      "metadata": {"title": "sales_summary_q2"}
+    },
+    {
+      "id": "sales_summary_q1",
+      "text": "Prior quarter had flat US growth and modest EU gains.",
+      "score": 0.78,
+      "source": "kb",
+      "metadata": {"title": "sales_summary_q1"}
+    }
+  ],
+  "metrics": {"total_delta": 20.0},
+  "context": {"model": "gpt-4.1", "top_k": 2}
+}

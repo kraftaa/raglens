@@ -1,0 +1,21 @@
+{
+  "question": "How can I reduce unwanted robocalls and where should I report scam calls?",
+  "answer": "Block unknown callers and ignore suspicious calls.",
+  "retrieved_docs": [
+    {
+      "id": "usa_telemarketer",
+      "text": "USAGov notes FCC guidance for reducing unwanted robocalls and robotexts.",
+      "score": 0.88,
+      "source": "https://www.usa.gov/telemarketer-scam-call-complaints",
+      "metadata": {"title": "USAGov telemarketer and scam call complaints"}
+    },
+    {
+      "id": "usa_consumer_complaints",
+      "text": "USAGov consumer complaints hub links to phone and text scam complaint options.",
+      "score": 0.81,
+      "source": "https://www.usa.gov/consumer-complaints",
+      "metadata": {"title": "USAGov consumer complaints"}
+    }
+  ],
+  "context": {"model": "gpt-4.1", "top_k": 2}
+}

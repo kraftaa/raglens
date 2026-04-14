@@ -1,0 +1,22 @@
+{
+  "question": "Why did revenue increase?",
+  "answer": "Revenue increased due to US Direct growth and stronger enterprise renewals.",
+  "retrieved_docs": [
+    {
+      "id": "sales_summary_q2",
+      "text": "US Direct revenue increased by 40 while EU Partner declined by 20.",
+      "score": 0.91,
+      "source": "kb",
+      "metadata": {"title": "sales_summary_q2"}
+    },
+    {
+      "id": "renewals_brief",
+      "text": "Enterprise renewals were stronger than expected in Q2.",
+      "score": 0.83,
+      "source": "kb",
+      "metadata": {"title": "renewals_brief"}
+    }
+  ],
+  "metrics": {"total_delta": 20.0},
+  "context": {"model": "gpt-4.1", "top_k": 2}
+}

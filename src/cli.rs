@@ -78,6 +78,62 @@ pub enum Commands {
         #[arg(long)]
         query: String,
     },
+    /// Compare two run artifacts and explain behavior drift
+    Diff {
+        #[arg(long)]
+        baseline: PathBuf,
+        #[arg(long)]
+        current: PathBuf,
+        #[arg(long, value_enum, default_value_t = DiffOutputFormat::Text)]
+        format: DiffOutputFormat,
+    },
+    /// Save one run artifact JSON for later diffing
+    #[command(name = "save-run")]
+    SaveRun {
+        /// Output run artifact path (e.g. artifacts/runs/2026-04-13T10-20-00_run.json)
+        #[arg(long)]
+        out: PathBuf,
+        /// Question text
+        #[arg(long)]
+        question: String,
+        /// Final answer text
+        #[arg(long)]
+        answer: String,
+        /// JSON file containing retrieved docs array (or object with retrieved_docs field)
+        #[arg(long)]
+        retrieved_docs: Option<PathBuf>,
+        /// Optional model name for context metadata
+        #[arg(long)]
+        model: Option<String>,
+        /// Optional top_k for context metadata
+        #[arg(long)]
+        top_k: Option<usize>,
+    },
+    /// Convert MCP/agent trace JSON into a run artifact for `diff`
+    #[command(name = "mcp-import")]
+    McpImport {
+        /// Input JSON file (agent trace/log payload)
+        #[arg(long = "in")]
+        input: PathBuf,
+        /// Output run artifact path
+        #[arg(long)]
+        out: PathBuf,
+        /// Optional JSON pointer to question (e.g. /request/question)
+        #[arg(long)]
+        question_pointer: Option<String>,
+        /// Optional JSON pointer to answer (e.g. /response/answer)
+        #[arg(long)]
+        answer_pointer: Option<String>,
+        /// Optional JSON pointer to retrieved docs array (e.g. /retrieval/docs)
+        #[arg(long)]
+        docs_pointer: Option<String>,
+        /// Optional model name for context metadata
+        #[arg(long)]
+        model: Option<String>,
+        /// Optional top_k for context metadata
+        #[arg(long)]
+        top_k: Option<usize>,
+    },
     /// Suggest first retrieval fix to try from simulation signals
     Fix {
         /// Path to documents directory
@@ -240,4 +296,10 @@ pub enum PeriodGranularity {
     Raw,
     Month,
     Week,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum DiffOutputFormat {
+    Text,
+    Json,
 }

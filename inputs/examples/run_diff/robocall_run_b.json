@@ -1,0 +1,34 @@
+{
+  "question": "How can I reduce unwanted robocalls and where should I report scam calls?",
+  "answer": "Register on the National Do Not Call Registry and report scam calls to the FTC at DoNotCall.gov/ReportFraud.",
+  "retrieved_docs": [
+    {
+      "id": "usa_telemarketer",
+      "text": "USAGov says the National Do Not Call Registry can reduce telemarketing calls and explains complaint channels.",
+      "score": 0.92,
+      "source": "https://www.usa.gov/telemarketer-scam-call-complaints",
+      "metadata": {"title": "USAGov telemarketer and scam call complaints"}
+    },
+    {
+      "id": "ftc_robocalls",
+      "text": "FTC consumer guidance says illegal robocalls should be reported through DoNotCall.gov and emphasizes call blocking.",
+      "score": 0.90,
+      "source": "https://consumer.ftc.gov/articles/0259-robocalls",
+      "metadata": {"title": "FTC robocalls guidance"}
+    }
+  ],
+  "claims": [
+    {
+      "text": "Do Not Call Registry can reduce legitimate telemarketing calls",
+      "supported": true,
+      "evidence_doc_ids": ["usa_telemarketer"]
+    },
+    {
+      "text": "Report illegal robocalls to FTC channels",
+      "supported": true,
+      "evidence_doc_ids": ["ftc_robocalls"]
+    }
+  ],
+  "metrics": {"total_delta": null},
+  "context": {"model": "gpt-4.1", "top_k": 2}
+}

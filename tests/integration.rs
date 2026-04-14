@@ -977,6 +977,411 @@ fn answer_audit_month_granularity_buckets_dates() {
     let _ = fs::remove_dir_all(dir);
 }
 
+fn write_temp_json(path: &std::path::Path, value: &serde_json::Value) {
+    fs::write(path, serde_json::to_vec_pretty(value).unwrap()).unwrap();
+}
+
+#[test]
+fn diff_case_a_no_meaningful_change() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_diff_a_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let baseline = dir.join("baseline.json");
+    let current = dir.join("current.json");
+    let run = json!({
+        "question": "Why did revenue increase?",
+        "answer": "Revenue increased due to US growth",
+        "retrieved_docs": [
+            {"id":"doc_us","text":"US revenue increased by 40.","score":0.91}
+        ]
+    });
+    write_temp_json(&baseline, &run);
+    write_temp_json(&current, &run);
+
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("diff")
+        .arg("--baseline")
+        .arg(&baseline)
+        .arg("--current")
+        .arg(&current)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["answer_diff"]["changed"], false);
+    assert_eq!(v["retrieval_diff"]["changed"], false);
+    assert_eq!(v["root_cause"], "no_meaningful_change");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn diff_case_b_answer_generation_changed() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_diff_b_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let baseline = dir.join("baseline.json");
+    let current = dir.join("current.json");
+    write_temp_json(
+        &baseline,
+        &json!({
+            "question": "Why did revenue increase?",
+            "answer": "Revenue increased due to EU growth",
+            "retrieved_docs": [
+                {"id":"doc_eu","text":"EU revenue increased by 20.","score":0.88}
+            ]
+        }),
+    );
+    write_temp_json(
+        &current,
+        &json!({
+            "question": "Why did revenue increase?",
+            "answer": "Revenue increased due to US Direct growth",
+            "retrieved_docs": [
+                {"id":"doc_eu","text":"EU revenue increased by 20.","score":0.88}
+            ]
+        }),
+    );
+
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("diff")
+        .arg("--baseline")
+        .arg(&baseline)
+        .arg("--current")
+        .arg(&current)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["answer_diff"]["changed"], true);
+    assert_eq!(v["retrieval_diff"]["changed"], false);
+    assert_eq!(v["root_cause"], "answer_generation_changed");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn diff_case_c_retrieval_changed_with_answer_change() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_diff_c_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let baseline = dir.join("baseline.json");
+    let current = dir.join("current.json");
+    write_temp_json(
+        &baseline,
+        &json!({
+            "question": "Why did revenue increase?",
+            "answer": "Revenue increased due to EU growth",
+            "retrieved_docs": [
+                {"id":"doc_eu","text":"EU Partner revenue increased by 20.","score":0.88}
+            ]
+        }),
+    );
+    write_temp_json(
+        &current,
+        &json!({
+            "question": "Why did revenue increase?",
+            "answer": "Revenue increased due to US Direct growth",
+            "retrieved_docs": [
+                {"id":"doc_us","text":"US Direct revenue increased by 40.","score":0.91}
+            ]
+        }),
+    );
+
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("diff")
+        .arg("--baseline")
+        .arg(&baseline)
+        .arg("--current")
+        .arg(&current)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["answer_diff"]["changed"], true);
+    assert_eq!(v["retrieval_diff"]["changed"], true);
+    assert_eq!(v["root_cause"], "retrieval_changed");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn diff_case_d_retrieval_changed_but_answer_stable() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_diff_d_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let baseline = dir.join("baseline.json");
+    let current = dir.join("current.json");
+    write_temp_json(
+        &baseline,
+        &json!({
+            "question": "Why did revenue increase?",
+            "answer": "Revenue increased due to US growth",
+            "retrieved_docs": [
+                {"id":"doc_old","text":"Legacy doc.","score":0.40}
+            ]
+        }),
+    );
+    write_temp_json(
+        &current,
+        &json!({
+            "question": "Why did revenue increase?",
+            "answer": "Revenue increased due to US growth",
+            "retrieved_docs": [
+                {"id":"doc_new","text":"Updated doc.","score":0.90}
+            ]
+        }),
+    );
+
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("diff")
+        .arg("--baseline")
+        .arg(&baseline)
+        .arg("--current")
+        .arg(&current)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["answer_diff"]["changed"], false);
+    assert_eq!(v["retrieval_diff"]["changed"], true);
+    assert_eq!(v["root_cause"], "retrieval_changed_but_answer_stable");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn diff_case_e_missing_scores_supported() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_diff_e_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let baseline = dir.join("baseline.json");
+    let current = dir.join("current.json");
+    write_temp_json(
+        &baseline,
+        &json!({
+            "question": "Why did revenue increase?",
+            "answer": "Revenue increased due to US growth",
+            "retrieved_docs": [
+                {"id":"doc_old","text":"Old doc without score"}
+            ]
+        }),
+    );
+    write_temp_json(
+        &current,
+        &json!({
+            "question": "Why did revenue increase?",
+            "answer": "Revenue increased due to US growth",
+            "retrieved_docs": [
+                {"id":"doc_new","text":"New doc without score"}
+            ]
+        }),
+    );
+
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    let out = cmd
+        .arg("diff")
+        .arg("--baseline")
+        .arg(&baseline)
+        .arg("--current")
+        .arg(&current)
+        .arg("--format")
+        .arg("json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["retrieval_diff"]["changed"], true);
+    assert!(v["retrieval_diff"]["added_docs"].as_array().is_some());
+    assert!(v["retrieval_diff"]["removed_docs"].as_array().is_some());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn save_run_writes_artifact_from_retrieved_docs_array() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_save_run_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("run.json");
+    let docs = dir.join("retrieved.json");
+    fs::write(
+        &docs,
+        serde_json::to_vec_pretty(&json!([
+            {
+                "id": "doc_1",
+                "text": "US Direct revenue increased by 40.",
+                "score": 0.91
+            }
+        ]))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    cmd.arg("save-run")
+        .arg("--out")
+        .arg(&out)
+        .arg("--question")
+        .arg("Why did revenue increase?")
+        .arg("--answer")
+        .arg("Revenue increased due to US growth")
+        .arg("--retrieved-docs")
+        .arg(&docs)
+        .arg("--model")
+        .arg("gpt-4.1")
+        .arg("--top-k")
+        .arg("3")
+        .assert()
+        .success();
+
+    let written: Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(written["question"], "Why did revenue increase?");
+    assert_eq!(written["context"]["model"], "gpt-4.1");
+    assert_eq!(written["context"]["top_k"], 3);
+    assert_eq!(written["retrieved_docs"][0]["id"], "doc_1");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn save_run_rejects_duplicate_retrieved_doc_ids() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_save_run_dup_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("run.json");
+    let docs = dir.join("retrieved.json");
+    fs::write(
+        &docs,
+        serde_json::to_vec_pretty(&json!([
+            {"id":"doc_1","text":"first"},
+            {"id":"doc_1","text":"duplicate"}
+        ]))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("rag-audit").unwrap();
+    cmd.arg("save-run")
+        .arg("--out")
+        .arg(&out)
+        .arg("--question")
+        .arg("Why did revenue increase?")
+        .arg("--answer")
+        .arg("Revenue increased due to US growth")
+        .arg("--retrieved-docs")
+        .arg(&docs)
+        .assert()
+        .failure()
+        .stderr(contains("duplicate retrieved_docs id"));
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn mcp_import_autodetects_common_trace_shape() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_mcp_import_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("run.json");
+
+    let mut cmd = Command::cargo_bin("raglens").unwrap();
+    cmd.arg("mcp-import")
+        .arg("--in")
+        .arg(fixture_path("mcp/trace_basic.json"))
+        .arg("--out")
+        .arg(&out)
+        .arg("--model")
+        .arg("gpt-4.1")
+        .arg("--top-k")
+        .arg("5")
+        .assert()
+        .success();
+
+    let written: Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(written["question"], "Why did revenue increase?");
+    assert_eq!(
+        written["answer"],
+        "Revenue increased due to US Direct growth."
+    );
+    assert_eq!(written["retrieved_docs"][0]["id"], "sales_us_direct");
+    assert_eq!(written["context"]["model"], "gpt-4.1");
+    assert_eq!(written["context"]["top_k"], 5);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn mcp_import_supports_custom_json_pointers() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_mcp_import_ptr_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let out = dir.join("run.json");
+
+    let mut cmd = Command::cargo_bin("raglens").unwrap();
+    cmd.arg("mcp-import")
+        .arg("--in")
+        .arg(fixture_path("mcp/trace_custom.json"))
+        .arg("--out")
+        .arg(&out)
+        .arg("--question-pointer")
+        .arg("/payload/q")
+        .arg("--answer-pointer")
+        .arg("/payload/final")
+        .arg("--docs-pointer")
+        .arg("/payload/ctx/hits")
+        .assert()
+        .success();
+
+    let written: Value = serde_json::from_slice(&fs::read(&out).unwrap()).unwrap();
+    assert_eq!(written["question"], "How can I reduce unwanted robocalls?");
+    assert_eq!(written["retrieved_docs"][0]["id"], "ftc_robocalls");
+    assert_eq!(written["retrieved_docs"][0]["score"], 0.9);
+    let _ = fs::remove_dir_all(dir);
+}
+
 #[test]
 fn simulate_requires_queries_flag() {
     let mut cmd = Command::cargo_bin("rag-audit").unwrap();

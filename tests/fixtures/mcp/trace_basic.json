@@ -1,0 +1,25 @@
+{
+  "request": {
+    "question": "Why did revenue increase?"
+  },
+  "response": {
+    "answer": "Revenue increased due to US Direct growth."
+  },
+  "retrieval": {
+    "docs": [
+      {
+        "doc_id": "sales_us_direct",
+        "content": "US Direct revenue increased by 40 in the current period.",
+        "score": 0.91,
+        "source": "kb://sales/us_direct"
+      },
+      {
+        "doc_id": "sales_eu_partner",
+        "content": "EU Partner revenue decreased by 20 in the current period.",
+        "score": 0.74,
+        "source": "kb://sales/eu_partner"
+      }
+    ]
+  }
+}
+

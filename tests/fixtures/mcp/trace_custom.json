@@ -1,0 +1,21 @@
+{
+  "payload": {
+    "q": "How can I reduce unwanted robocalls?",
+    "final": "Register with the National Do Not Call Registry and report scam calls to the FTC.",
+    "ctx": {
+      "hits": [
+        {
+          "id": "ftc_robocalls",
+          "text": "FTC says to register for Do Not Call and report illegal robocalls.",
+          "similarity": 0.9
+        },
+        {
+          "id": "usa_telemarketer",
+          "text": "USAGov links FCC and FTC resources for robocalls.",
+          "similarity": 0.81
+        }
+      ]
+    }
+  }
+}
+

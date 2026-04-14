@@ -6,14 +6,16 @@ mod config;
 mod diagnostics;
 mod embeddings;
 mod loader;
+mod mcp_import;
 mod model;
 mod normalize;
 mod report;
 mod retrieval;
+mod run_diff;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands, CompareFormat, PeriodGranularity};
+use cli::{Cli, Commands, CompareFormat, DiffOutputFormat, PeriodGranularity};
 use config::Config;
 use model::{FixReport, OptimizeCandidate, OptimizeSummary};
 use serde::Serialize;
@@ -146,6 +148,45 @@ pub fn run() -> Result<()> {
         Commands::Explain { path, query } => {
             ensure_fail_flags_supported("explain", fail_on)?;
             run_explain(path, &config, output, query)?
+        }
+        Commands::Diff {
+            baseline,
+            current,
+            format,
+        } => {
+            ensure_fail_flags_supported("diff", fail_on)?;
+            run_diff(baseline, current, format, output)?
+        }
+        Commands::SaveRun {
+            out,
+            question,
+            answer,
+            retrieved_docs,
+            model,
+            top_k,
+        } => {
+            ensure_fail_flags_supported("save-run", fail_on)?;
+            run_save_run(out, question, answer, retrieved_docs, model, top_k)?
+        }
+        Commands::McpImport {
+            input,
+            out,
+            question_pointer,
+            answer_pointer,
+            docs_pointer,
+            model,
+            top_k,
+        } => {
+            ensure_fail_flags_supported("mcp-import", fail_on)?;
+            run_mcp_import(
+                input,
+                out,
+                question_pointer,
+                answer_pointer,
+                docs_pointer,
+                model,
+                top_k,
+            )?
         }
         Commands::Fix {
             path,
@@ -691,6 +732,100 @@ fn run_answer_audit(
         report.coverage_pct, report.alignment_score, report.confidence
     );
     Ok(())
+}
+
+fn run_diff(
+    baseline: PathBuf,
+    current: PathBuf,
+    format: DiffOutputFormat,
+    output: report::OutputOpts<'_>,
+) -> Result<()> {
+    let report = run_diff::compare_run_files(&baseline, &current)?;
+    write_json_artifact(output, "diff.json", &report)?;
+
+    if output.json || format == DiffOutputFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    println!("{}", run_diff::render_diff_text(&report));
+    Ok(())
+}
+
+fn run_save_run(
+    out: PathBuf,
+    question: String,
+    answer: String,
+    retrieved_docs_path: Option<PathBuf>,
+    model: Option<String>,
+    top_k: Option<usize>,
+) -> Result<()> {
+    let retrieved_docs = if let Some(path) = retrieved_docs_path {
+        load_retrieved_docs(&path)?
+    } else {
+        Vec::new()
+    };
+
+    let run = model::RunArtifact {
+        question,
+        answer,
+        retrieved_docs,
+        claims: Vec::new(),
+        metrics: None,
+        context: if model.is_some() || top_k.is_some() {
+            Some(model::RunContext { model, top_k })
+        } else {
+            None
+        },
+    };
+    run_diff::validate_artifact_for_save(&run, "--out artifact")?;
+
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&out, serde_json::to_vec_pretty(&run)?)?;
+    println!("Saved run artifact: {}", out.display());
+    Ok(())
+}
+
+fn run_mcp_import(
+    input: PathBuf,
+    out: PathBuf,
+    question_pointer: Option<String>,
+    answer_pointer: Option<String>,
+    docs_pointer: Option<String>,
+    model: Option<String>,
+    top_k: Option<usize>,
+) -> Result<()> {
+    let run = mcp_import::import_file(
+        &input,
+        &mcp_import::McpImportOpts {
+            question_pointer: question_pointer.as_deref(),
+            answer_pointer: answer_pointer.as_deref(),
+            docs_pointer: docs_pointer.as_deref(),
+            model,
+            top_k,
+        },
+    )?;
+    run_diff::validate_artifact_for_save(&run, "--out artifact")?;
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&out, serde_json::to_vec_pretty(&run)?)?;
+    println!("Saved run artifact from MCP JSON: {}", out.display());
+    Ok(())
+}
+
+fn load_retrieved_docs(path: &std::path::Path) -> Result<Vec<model::RetrievedDoc>> {
+    let data = fs::read(path)?;
+    let value: serde_json::Value = serde_json::from_slice(&data)?;
+    if value.is_array() {
+        return Ok(serde_json::from_value(value)?);
+    }
+    if let Some(items) = value.get("retrieved_docs") {
+        return Ok(serde_json::from_value(items.clone())?);
+    }
+    anyhow::bail!("retrieved docs JSON must be an array or contain a 'retrieved_docs' array field");
 }
 
 fn write_json_artifact<T: Serialize>(

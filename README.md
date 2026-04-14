@@ -106,6 +106,83 @@ Try first: reduce chunk_size from 400 to 200
 Then rerun: raglens simulate <docs> --queries queries.txt
 ```
 
+### `diff`
+
+Compare two run artifacts and explain why behavior changed.
+
+```bash
+raglens diff --baseline run_a.json --current run_b.json
+```
+
+Optional machine output:
+
+```bash
+raglens diff --baseline run_a.json --current run_b.json --format json
+```
+
+Outputs:
+- whether answer changed
+- whether retrieval changed (added/removed/common docs)
+- likely root cause classification
+- confidence level
+
+Example artifacts:
+
+```bash
+raglens diff \
+  --baseline inputs/examples/run_diff/robocall_run_a.json \
+  --current inputs/examples/run_diff/robocall_run_b.json
+```
+
+More scenarios (equivalent, contradictory, score-shift-only, more-specific):
+`inputs/examples/run_diff/README.md`
+
+### `save-run`
+
+Save one run artifact JSON from your app outputs so it can be diffed later.
+
+```bash
+raglens save-run \
+  --out artifacts/runs/2026-04-13T10-20-00_run.json \
+  --question "Why did revenue increase?" \
+  --answer "Revenue increased due to US growth" \
+  --retrieved-docs artifacts/runs/retrieved_docs.json \
+  --model gpt-4.1 \
+  --top-k 5
+```
+
+`--retrieved-docs` accepts:
+- a JSON array of retrieved docs
+- or an object containing a `retrieved_docs` array
+
+### `mcp-import`
+
+Convert an MCP/agent trace JSON into a valid run artifact for `diff`.
+This avoids hand-writing schema-matching JSON.
+
+```bash
+raglens mcp-import \
+  --in ./trace.json \
+  --out artifacts/runs/run_a.json
+```
+
+If your trace uses custom field paths, set JSON pointers:
+
+```bash
+raglens mcp-import \
+  --in ./trace.json \
+  --out artifacts/runs/run_a.json \
+  --question-pointer /payload/q \
+  --answer-pointer /payload/final \
+  --docs-pointer /payload/ctx/hits
+```
+
+Then compare runs:
+
+```bash
+raglens diff --baseline artifacts/runs/run_a.json --current artifacts/runs/run_b.json
+```
+
 ## Inputs
 
 Recommended MVP inputs:
