@@ -69,7 +69,7 @@ pub fn simulate_retrieval(
     let query_vectors = embedder.embed_batch(&query_texts)?;
 
     let mut results = Vec::new();
-    for (spec, qvec) in queries.iter().zip(query_vectors.into_iter()) {
+    for (spec, qvec) in queries.iter().zip(query_vectors) {
         let ranked = score_query(
             &corpus_embeddings,
             &chunk_lookup,
@@ -343,7 +343,7 @@ fn embed_with_cache(
     if !to_embed.is_empty() {
         let texts: Vec<String> = to_embed.iter().map(|(_, c)| c.text.clone()).collect();
         let embedded = embedder.embed_batch(&texts)?;
-        for ((key, chunk), vector) in to_embed.into_iter().zip(embedded.into_iter()) {
+        for ((key, chunk), vector) in to_embed.into_iter().zip(embedded) {
             cache.insert(key, vector.clone());
             vectors.push(ChunkEmbedding {
                 chunk_id: chunk.chunk_id.clone(),
