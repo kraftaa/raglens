@@ -5,6 +5,7 @@ mod compare_runs;
 mod config;
 mod diagnostics;
 mod embeddings;
+mod eval;
 mod loader;
 mod mcp_import;
 mod model;
@@ -15,7 +16,7 @@ mod run_diff;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands, CompareFormat, DiffOutputFormat, PeriodGranularity};
+use cli::{Cli, Commands, CompareFormat, DiffOutputFormat, PeriodGranularity, ReportOutputFormat};
 use config::Config;
 use model::{FixReport, OptimizeCandidate, OptimizeSummary};
 use serde::Serialize;
@@ -167,6 +168,26 @@ pub fn run() -> Result<()> {
         } => {
             ensure_fail_flags_supported("save-run", fail_on)?;
             run_save_run(out, question, answer, retrieved_docs, model, top_k)?
+        }
+        Commands::Eval { run, rules, json } => {
+            ensure_fail_flags_supported("eval", fail_on)?;
+            run_eval(run, rules, report::OutputOpts { json, ..output })?
+        }
+        Commands::Report {
+            run,
+            rules,
+            baseline,
+            format,
+            json,
+        } => {
+            ensure_fail_flags_supported("report", fail_on)?;
+            run_report(
+                run,
+                rules,
+                baseline,
+                format,
+                report::OutputOpts { json, ..output },
+            )?
         }
         Commands::McpImport {
             input,
@@ -816,6 +837,56 @@ fn run_mcp_import(
     Ok(())
 }
 
+fn run_eval(run: PathBuf, rules: PathBuf, output: report::OutputOpts<'_>) -> Result<()> {
+    let eval_report = eval::evaluate_run_path(&run, &rules)?;
+    write_json_artifact(output, "eval.json", &eval_report)?;
+    if output.json {
+        println!("{}", serde_json::to_string_pretty(&eval_report)?);
+        return Ok(());
+    }
+    println!("{}", eval::render_eval_text(&eval_report));
+    Ok(())
+}
+
+fn run_report(
+    run: PathBuf,
+    rules: Option<PathBuf>,
+    baseline: Option<PathBuf>,
+    format: ReportOutputFormat,
+    output: report::OutputOpts<'_>,
+) -> Result<()> {
+    let eval_report = eval::load_report_or_eval(&run, rules.as_deref())?;
+    let baseline_report = if let Some(path) = baseline {
+        Some(eval::load_eval_report(&path)?)
+    } else {
+        None
+    };
+    let regression = baseline_report
+        .as_ref()
+        .map(|base| eval::regression(&eval_report, base));
+    let payload = eval::ReportPayload {
+        eval: eval_report.clone(),
+        regression,
+    };
+    write_json_artifact(output, "report.json", &payload)?;
+
+    if output.json || format == ReportOutputFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+
+    let markdown = eval::render_report_markdown(&eval_report, baseline_report.as_ref());
+    let html = eval::render_report_html(&eval_report, baseline_report.as_ref());
+    if format == ReportOutputFormat::Html {
+        write_report_html_artifact(output, "report.html", &html)?;
+        println!("{html}");
+    } else {
+        write_report_text_artifact(output, "report.md", &markdown)?;
+        println!("{markdown}");
+    }
+    Ok(())
+}
+
 fn load_retrieved_docs(path: &std::path::Path) -> Result<Vec<model::RetrievedDoc>> {
     let data = fs::read(path)?;
     let value: serde_json::Value = serde_json::from_slice(&data)?;
@@ -845,6 +916,37 @@ fn write_json_artifact<T: Serialize>(
         let data = serde_json::to_vec_pretty(payload)?;
         fs::create_dir_all(dir)?;
         fs::write(dir.join(filename), data)?;
+    }
+    Ok(())
+}
+
+fn write_report_text_artifact(
+    output: report::OutputOpts<'_>,
+    filename: &str,
+    text: &str,
+) -> Result<()> {
+    if let Some(dir) = output.artifacts {
+        fs::create_dir_all(dir)?;
+        fs::write(dir.join(filename), text)?;
+    }
+    Ok(())
+}
+
+fn write_report_html_artifact(
+    output: report::OutputOpts<'_>,
+    filename: &str,
+    html: &str,
+) -> Result<()> {
+    if let Some(path) = output.html_out {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, html)?;
+        return Ok(());
+    }
+    if let Some(dir) = output.artifacts {
+        fs::create_dir_all(dir)?;
+        fs::write(dir.join(filename), html)?;
     }
     Ok(())
 }

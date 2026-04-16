@@ -281,6 +281,47 @@ pub enum Confidence {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EvalIssue {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EvalCaseResult {
+    pub id: String,
+    pub question: String,
+    pub pass: bool,
+    pub answer_preview: String,
+    pub retrieved_docs: usize,
+    pub grounded_overlap: f64,
+    pub unsupported_claims: Vec<String>,
+    pub issues: Vec<EvalIssue>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EvalReport {
+    pub run_input: String,
+    pub rules_input: String,
+    pub total_cases: usize,
+    pub passed_cases: usize,
+    pub failed_cases: usize,
+    pub pass_rate: f64,
+    pub cases: Vec<EvalCaseResult>,
+    #[serde(default)]
+    pub unmatched_runs: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EvalRegression {
+    pub baseline_pass_rate: f64,
+    pub current_pass_rate: f64,
+    pub pass_rate_delta: f64,
+    pub baseline_failed: usize,
+    pub current_failed: usize,
+    pub failed_delta: isize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DiffReport {
     pub question: String,
     pub answer_diff: AnswerDiff,

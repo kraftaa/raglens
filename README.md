@@ -137,6 +137,46 @@ raglens diff \
 More scenarios (equivalent, contradictory, score-shift-only, more-specific):
 `inputs/examples/run_diff/README.md`
 
+### `eval`
+
+Evaluate run artifacts against deterministic rule checks.
+
+```bash
+raglens eval --run ./runs --rules ./rules.yaml
+```
+
+Checks include:
+- grounding support against retrieved docs
+- required/forbidden phrases
+- answer length bounds
+- optional JSON shape constraints
+
+JSON output:
+
+```bash
+raglens eval --run ./runs --rules ./rules.yaml --json
+```
+
+### `report`
+
+Generate a shareable report from an eval run (Markdown by default).
+
+```bash
+raglens report --run ./runs --rules ./rules.yaml
+```
+
+Render HTML:
+
+```bash
+raglens report --run ./runs --rules ./rules.yaml --format html --html-out artifacts/report.html
+```
+
+If you already have an eval JSON artifact:
+
+```bash
+raglens report --run artifacts/eval.json
+```
+
 ### `save-run`
 
 Save one run artifact JSON from your app outputs so it can be diffed later.

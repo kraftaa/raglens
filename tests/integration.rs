@@ -1383,6 +1383,143 @@ fn mcp_import_supports_custom_json_pointers() {
 }
 
 #[test]
+fn eval_reports_pass_fail_breakdown() {
+    let mut cmd = Command::cargo_bin("raglens").unwrap();
+    let out = cmd
+        .arg("eval")
+        .arg("--run")
+        .arg(fixture_path("eval/runs"))
+        .arg("--rules")
+        .arg(fixture_path("eval/rules.yaml"))
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["total_cases"], 2);
+    assert_eq!(v["passed_cases"], 1);
+    assert_eq!(v["failed_cases"], 1);
+    let failing = v["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "late_refund")
+        .unwrap();
+    assert_eq!(failing["pass"], false);
+    assert!(failing["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["code"] == "FORBIDDEN_PHRASE"));
+}
+
+#[test]
+fn report_generates_markdown_from_eval_rules() {
+    let mut cmd = Command::cargo_bin("raglens").unwrap();
+    cmd.arg("report")
+        .arg("--run")
+        .arg(fixture_path("eval/runs"))
+        .arg("--rules")
+        .arg(fixture_path("eval/rules.yaml"))
+        .assert()
+        .success()
+        .stdout(contains("## Summary"))
+        .stdout(contains("## Top failures"))
+        .stdout(contains("late_refund"));
+}
+
+#[test]
+fn eval_matches_rule_by_id_when_question_differs() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_eval_id_match_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let runs_dir = dir.join("runs");
+    fs::create_dir_all(&runs_dir).unwrap();
+    let rules = dir.join("rules.yaml");
+
+    fs::write(
+        runs_dir.join("refund_policy.json"),
+        serde_json::to_vec_pretty(&json!({
+            "question": "Completely different wording?",
+            "answer": "Please follow the refund policy.",
+            "retrieved_docs": [{"id":"doc1","text":"refund policy details"}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    fs::write(
+        &rules,
+        r#"- id: refund_policy
+  question: "Can I return after 40 days?"
+  expected:
+    must_include:
+      - "policy"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("raglens").unwrap();
+    let out = cmd
+        .arg("eval")
+        .arg("--run")
+        .arg(&runs_dir)
+        .arg("--rules")
+        .arg(&rules)
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["passed_cases"], 1);
+    assert_eq!(v["failed_cases"], 0);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn eval_fails_on_invalid_run_json_in_directory() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_eval_invalid_run_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let runs_dir = dir.join("runs");
+    fs::create_dir_all(&runs_dir).unwrap();
+    let rules = dir.join("rules.yaml");
+
+    fs::write(runs_dir.join("bad.json"), b"{not valid json").unwrap();
+    fs::write(
+        &rules,
+        r#"- id: x
+  question: "q"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("raglens").unwrap();
+    cmd.arg("eval")
+        .arg("--run")
+        .arg(&runs_dir)
+        .arg("--rules")
+        .arg(&rules)
+        .assert()
+        .failure()
+        .stderr(contains("invalid run artifact"));
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn simulate_requires_queries_flag() {
     let mut cmd = Command::cargo_bin("rag-audit").unwrap();
     cmd.arg("simulate")

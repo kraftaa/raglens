@@ -1,0 +1,8 @@
+- id: robocall_guidance
+  question: "How can I reduce unwanted robocalls and where should I report scam calls?"
+  expected:
+    grounded: true
+    must_include:
+      - "report"
+    must_not_include:
+      - "guaranteed compensation"

@@ -1,0 +1,17 @@
+{
+  "question": "Can I return after 40 days?",
+  "answer": "Our policy allows returns within 45 days in original condition. Please follow the returns policy.",
+  "retrieved_docs": [
+    {
+      "id": "returns_policy",
+      "text": "Returns are accepted within 45 days of delivery when items are in original condition.",
+      "score": 0.91
+    },
+    {
+      "id": "support_route",
+      "text": "Customers should contact support for policy exceptions and dispute routing.",
+      "score": 0.73
+    }
+  ]
+}
+

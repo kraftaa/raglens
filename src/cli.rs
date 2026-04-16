@@ -31,7 +31,7 @@ pub struct Cli {
     /// Write single JSON output to this file (overrides artifacts_dir for that run)
     #[arg(long, global = true)]
     pub json_out: Option<PathBuf>,
-    /// Write HTML report output to this file (supported by explain)
+    /// Write HTML report output to this file (supported by explain/report)
     #[arg(long, global = true)]
     pub html_out: Option<PathBuf>,
     /// Fail if dominant document rate exceeds this value (0-1)
@@ -108,6 +108,36 @@ pub enum Commands {
         /// Optional top_k for context metadata
         #[arg(long)]
         top_k: Option<usize>,
+    },
+    /// Evaluate run artifacts against deterministic rules
+    Eval {
+        /// Run artifact JSON file or directory containing run artifacts
+        #[arg(long)]
+        run: PathBuf,
+        /// Rules YAML file
+        #[arg(long)]
+        rules: PathBuf,
+        /// Output JSON instead of human report
+        #[arg(long)]
+        json: bool,
+    },
+    /// Render shareable evaluation report (markdown/html/json)
+    Report {
+        /// Eval JSON report, or run artifact file/dir when --rules is provided
+        #[arg(long)]
+        run: PathBuf,
+        /// Optional rules file; required when --run points to raw run artifacts
+        #[arg(long)]
+        rules: Option<PathBuf>,
+        /// Optional baseline eval report for regression summary
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// Output format
+        #[arg(long, value_enum, default_value_t = ReportOutputFormat::Markdown)]
+        format: ReportOutputFormat,
+        /// Output JSON payload instead of human report
+        #[arg(long)]
+        json: bool,
     },
     /// Convert MCP/agent trace JSON into a run artifact for `diff`
     #[command(name = "mcp-import")]
@@ -301,5 +331,12 @@ pub enum PeriodGranularity {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum DiffOutputFormat {
     Text,
+    Json,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]
+pub enum ReportOutputFormat {
+    Markdown,
+    Html,
     Json,
 }

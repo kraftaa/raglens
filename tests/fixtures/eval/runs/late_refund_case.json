@@ -1,0 +1,12 @@
+{
+  "question": "Do you guarantee refunds after 120 days?",
+  "answer": "Yes, we provide guaranteed refund after 120 days for all orders.",
+  "retrieved_docs": [
+    {
+      "id": "refund_policy_v2",
+      "text": "Refund eligibility window is 90 days. Requests after 90 days are generally ineligible.",
+      "score": 0.88
+    }
+  ]
+}
+
