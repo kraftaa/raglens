@@ -301,18 +301,59 @@ fn load_runs(path: &Path) -> Result<Vec<RunCase>> {
     }
 
     let mut runs = Vec::new();
+    let mut first_run_like_error: Option<anyhow::Error> = None;
     for file in files {
-        let run = load_run_file(&file)
-            .with_context(|| format!("invalid run artifact {}", file.display()))?;
-        let rel = file
-            .strip_prefix(path)
-            .ok()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| file.display().to_string());
-        runs.push(RunCase { id: rel, run });
+        let data = fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
+        let value: Value = match serde_json::from_slice(&data) {
+            Ok(v) => v,
+            Err(_) => {
+                // Ignore non-run JSON files in mixed artifact directories.
+                continue;
+            }
+        };
+
+        let run_like = value
+            .as_object()
+            .map(|obj| obj.contains_key("question") || obj.contains_key("answer"))
+            .unwrap_or(false);
+        if !run_like {
+            continue;
+        }
+
+        match serde_json::from_value::<RunArtifact>(value) {
+            Ok(run) => {
+                if run.question.trim().is_empty() || run.answer.trim().is_empty() {
+                    if first_run_like_error.is_none() {
+                        first_run_like_error = Some(anyhow::anyhow!(
+                            "run artifact {} must include non-empty question and answer",
+                            file.display()
+                        ));
+                    }
+                    continue;
+                }
+                let rel = file
+                    .strip_prefix(path)
+                    .ok()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| file.display().to_string());
+                runs.push(RunCase { id: rel, run });
+            }
+            Err(err) => {
+                if first_run_like_error.is_none() {
+                    first_run_like_error = Some(anyhow::anyhow!(
+                        "invalid run artifact {}: {}",
+                        file.display(),
+                        err
+                    ));
+                }
+            }
+        }
     }
 
     if runs.is_empty() {
+        if let Some(err) = first_run_like_error {
+            return Err(err);
+        }
         anyhow::bail!(
             "no valid run artifacts found under {}; expected JSON files with question/answer/retrieved_docs",
             path.display()
@@ -320,6 +361,19 @@ fn load_runs(path: &Path) -> Result<Vec<RunCase>> {
     }
 
     Ok(runs)
+}
+
+fn load_run_file(path: &Path) -> Result<RunArtifact> {
+    let data = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let run: RunArtifact = serde_json::from_slice(&data)
+        .with_context(|| format!("parsing run artifact {}", path.display()))?;
+    if run.question.trim().is_empty() || run.answer.trim().is_empty() {
+        anyhow::bail!(
+            "run artifact {} must include non-empty question and answer",
+            path.display()
+        );
+    }
+    Ok(run)
 }
 
 fn pick_run_by_rule_id(rule: &CaseRule, runs: &[RunCase], used: &[bool]) -> Option<usize> {
@@ -343,19 +397,6 @@ fn pick_run_by_rule_id(rule: &CaseRule, runs: &[RunCase], used: &[bool]) -> Opti
 
 fn run_stem(run_id: &str) -> Option<&str> {
     Path::new(run_id).file_stem().and_then(|s| s.to_str())
-}
-
-fn load_run_file(path: &Path) -> Result<RunArtifact> {
-    let data = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    let run: RunArtifact = serde_json::from_slice(&data)
-        .with_context(|| format!("parsing run artifact {}", path.display()))?;
-    if run.question.trim().is_empty() || run.answer.trim().is_empty() {
-        anyhow::bail!(
-            "run artifact {} must include non-empty question and answer",
-            path.display()
-        );
-    }
-    Ok(run)
 }
 
 fn evaluate_case(rule: &CaseRule, run: &RunArtifact) -> EvalCaseResult {
@@ -543,7 +584,17 @@ fn normalize_text(input: &str) -> String {
 }
 
 fn normalize_id(input: &str) -> String {
-    input.trim().to_lowercase()
+    let mut normalized = String::new();
+    for ch in input.chars() {
+        if ch.is_alphanumeric() {
+            normalized.extend(ch.to_lowercase());
+        }
+    }
+    if normalized.is_empty() {
+        input.trim().to_lowercase()
+    } else {
+        normalized
+    }
 }
 
 fn preview(text: &str, max_chars: usize) -> String {

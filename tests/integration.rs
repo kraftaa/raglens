@@ -1514,7 +1514,60 @@ fn eval_fails_on_invalid_run_json_in_directory() {
         .arg(&rules)
         .assert()
         .failure()
-        .stderr(contains("invalid run artifact"));
+        .stderr(contains("no valid run artifacts found"));
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn eval_matches_rule_id_across_separator_variants() {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("raglens_eval_id_sep_{stamp}"));
+    fs::create_dir_all(&dir).unwrap();
+    let runs_dir = dir.join("runs");
+    fs::create_dir_all(&runs_dir).unwrap();
+    let rules = dir.join("rules.yaml");
+
+    fs::write(
+        runs_dir.join("refund-policy.json"),
+        serde_json::to_vec_pretty(&json!({
+            "question": "Different question text",
+            "answer": "Please read the refund policy.",
+            "retrieved_docs": [{"id":"doc1","text":"refund policy details"}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    fs::write(
+        &rules,
+        r#"- id: refund_policy
+  question: "Can I return after 40 days?"
+  expected:
+    must_include:
+      - "policy"
+"#,
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("raglens").unwrap();
+    let out = cmd
+        .arg("eval")
+        .arg("--run")
+        .arg(&runs_dir)
+        .arg("--rules")
+        .arg(&rules)
+        .arg("--json")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(v["passed_cases"], 1);
 
     let _ = fs::remove_dir_all(dir);
 }
