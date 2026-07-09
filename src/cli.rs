@@ -87,6 +87,15 @@ pub enum Commands {
         #[arg(long, value_enum, default_value_t = DiffOutputFormat::Text)]
         format: DiffOutputFormat,
     },
+    /// Trace one saved RAG run back to retrieved evidence
+    Trace {
+        /// Run artifact JSON file produced by save-run, mcp-import, or your app
+        #[arg(long)]
+        run: PathBuf,
+        /// Output JSON instead of human report
+        #[arg(long)]
+        json: bool,
+    },
     /// Save one run artifact JSON for later diffing
     #[command(name = "save-run")]
     SaveRun {

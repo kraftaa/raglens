@@ -10,6 +10,7 @@ mod loader;
 mod mcp_import;
 mod model;
 mod normalize;
+mod provenance;
 mod report;
 mod retrieval;
 mod run_diff;
@@ -157,6 +158,10 @@ pub fn run() -> Result<()> {
         } => {
             ensure_fail_flags_supported("diff", fail_on)?;
             run_diff(baseline, current, format, output)?
+        }
+        Commands::Trace { run, json } => {
+            ensure_fail_flags_supported("trace", fail_on)?;
+            run_trace(run, report::OutputOpts { json, ..output })?
         }
         Commands::SaveRun {
             out,
@@ -515,6 +520,31 @@ fn run_compare(
         ranked: explanation.ranked.into_iter().take(5).collect(),
     };
     report::print_comparison(&query, &comparison, output)?;
+    Ok(())
+}
+
+fn run_trace(run: PathBuf, output: report::OutputOpts<'_>) -> Result<()> {
+    let trace = provenance::trace_run_file(&run)?;
+    let rendered = if output.json {
+        serde_json::to_string_pretty(&trace)?
+    } else {
+        provenance::render_trace_text(&trace)
+    };
+    write_trace_output(&rendered, output.json_out)?;
+    Ok(())
+}
+
+fn write_trace_output(rendered: &str, out: Option<&PathBuf>) -> Result<()> {
+    if let Some(path) = out {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+        fs::write(path, rendered)?;
+    } else {
+        println!("{rendered}");
+    }
     Ok(())
 }
 

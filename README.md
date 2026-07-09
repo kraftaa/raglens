@@ -7,6 +7,11 @@ MVP loop:
 2. `simulate` many queries
 3. `fix` suggests the first change to try
 
+Production/debugging loop:
+1. `save-run` stores a real app run
+2. `trace` shows the evidence chain for one answer
+3. `diff` compares two saved runs
+
 Scope: retrieval diagnostics only.  
 Not answer grading, hallucination detection, prompt eval, or agent tracing.
 
@@ -125,6 +130,28 @@ Outputs:
 - whether retrieval changed (added/removed/common docs)
 - likely root cause classification
 - confidence level
+
+### `trace`
+
+Trace one saved run back to retrieved evidence.
+
+```bash
+raglens trace --run artifacts/runs/2026-04-13T10-20-00_run.json
+```
+
+Outputs:
+- question and answer
+- best evidence match
+- retrieved docs ranked by answer/evidence overlap
+- score, source, chunk ID, and vector ID when present in metadata
+
+JSON output:
+
+```bash
+raglens trace --run artifacts/runs/2026-04-13T10-20-00_run.json --json
+```
+
+This is the VecTrace-style part of RAGLens: when a bad answer already happened, trace it back to the retrieved evidence chain.
 
 Example artifacts:
 
